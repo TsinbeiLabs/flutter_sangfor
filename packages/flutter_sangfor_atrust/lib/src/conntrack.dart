@@ -68,8 +68,7 @@ class ATrustTcpConntrack {
         ttl = _tcpSynAckTTL;
       case ATrustTcpConntrackState.outboundSyn:
         if (direction == 1 &&
-            (flags & (tcpSynFlag | tcpAckFlag)) ==
-                (tcpSynFlag | tcpAckFlag) &&
+            (flags & (tcpSynFlag | tcpAckFlag)) == (tcpSynFlag | tcpAckFlag) &&
             acknowledgment == ((sequenceNumber! + 1) & 0xffffffff)) {
           state = ATrustTcpConntrackState.synAck;
           sequenceNumber = sequence;

@@ -45,10 +45,12 @@ class ATrustAntiMitmData {
 
   void verifyChallenge() {
     _requireEnabled();
-    final material = sha256.convert(utf8.encode(
-      '$devicePublicKeyModulus$devicePublicKeyExponent'
-      'OrHWuJz7gku5awmVb5w1sKTmfeCWHmzokBxmn0sn0faIcv1G10PdrbbRGKBrrZ3m',
-    )).bytes;
+    final material = sha256
+        .convert(utf8.encode(
+          '$devicePublicKeyModulus$devicePublicKeyExponent'
+          'OrHWuJz7gku5awmVb5w1sKTmfeCWHmzokBxmn0sn0faIcv1G10PdrbbRGKBrrZ3m',
+        ))
+        .bytes;
     final cipher = CBCBlockCipher(AESEngine())
       ..init(
         true,
@@ -73,13 +75,17 @@ class ATrustAntiMitmData {
     if (mitmSignature.isEmpty) {
       throw const FormatException('aTrust anti-MITM signature is missing');
     }
-    final first = sha256.convert(utf8.encode(
-      '$devicePublicKeyModulus$devicePublicKeyExponent'
-      '3uW5IEy8KwDaOMK8uw1TmNr50U3aK1Qdu8b6vopXxGstzan3AJXxVNR6piuKi5Nq',
-    )).bytes;
-    final second = sha256.convert(utf8.encode(
-      _upperHex(first) + challenge,
-    )).bytes;
+    final first = sha256
+        .convert(utf8.encode(
+          '$devicePublicKeyModulus$devicePublicKeyExponent'
+          '3uW5IEy8KwDaOMK8uw1TmNr50U3aK1Qdu8b6vopXxGstzan3AJXxVNR6piuKi5Nq',
+        ))
+        .bytes;
+    final second = sha256
+        .convert(utf8.encode(
+          _upperHex(first) + challenge,
+        ))
+        .bytes;
     final key = <int>[
       for (var index = 0; index < 32; index++) first[index] ^ second[index],
     ];
@@ -87,19 +93,18 @@ class ATrustAntiMitmData {
     _collect(rawResponse, fields);
     final origin = fields.keys.toList()..sort();
     final message = origin.map((key) => '$key:${fields[key]}').join('&');
-    final expected = _upperHex(Hmac(sha256, key)
-        .convert(utf8.encode(message))
-        .bytes);
+    final expected =
+        _upperHex(Hmac(sha256, key).convert(utf8.encode(message)).bytes);
     if (expected != mitmSignature.toUpperCase()) {
-      throw const FormatException('aTrust anti-MITM response signature mismatch');
+      throw const FormatException(
+          'aTrust anti-MITM response signature mismatch');
     }
   }
 
   void verifyCertificateIdentity(Iterable<List<int>> peerCertificates) {
     _requireEnabled();
     final encodedCertificates = <String>[
-      if (rsaCertificate != null && rsaCertificate!.isNotEmpty)
-        rsaCertificate!,
+      if (rsaCertificate != null && rsaCertificate!.isNotEmpty) rsaCertificate!,
       if (sm2EncryptionCertificate != null &&
           sm2EncryptionCertificate!.isNotEmpty)
         sm2EncryptionCertificate!,
@@ -109,9 +114,8 @@ class ATrustAntiMitmData {
         'aTrust anti-MITM certificate identities are missing',
       );
     }
-    final expected = encodedCertificates
-        .map(_certificateDigestFromBase64)
-        .toSet();
+    final expected =
+        encodedCertificates.map(_certificateDigestFromBase64).toSet();
     for (final certificate in peerCertificates) {
       final actual = _certificateDigest(certificate);
       if (expected.contains(actual)) return;
@@ -160,8 +164,10 @@ List<int> _pkcs7(List<int> value, int blockSize) {
   return <int>[...value, ...List<int>.filled(count, count)];
 }
 
-String _upperHex(Iterable<int> bytes) =>
-    bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+String _upperHex(Iterable<int> bytes) => bytes
+    .map((value) => value.toRadixString(16).padLeft(2, '0'))
+    .join()
+    .toUpperCase();
 
 String _certificateDigest(List<int> der) => _certificateDigestFromBase64(
       base64Encode(der),

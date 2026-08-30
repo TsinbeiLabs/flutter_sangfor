@@ -160,9 +160,9 @@ class ATrustConnector implements SangforConnector {
     );
     ATrustAuthenticatedSession authenticated;
     try {
-      authenticated = await (options.cancellationToken?.race(operation) ??
-              operation)
-          .timeout(options.timeout);
+      authenticated =
+          await (options.cancellationToken?.race(operation) ?? operation)
+              .timeout(options.timeout);
     } on TimeoutException catch (error, stackTrace) {
       throw SangforException(
         SangforErrorCode.timeout,
@@ -186,8 +186,7 @@ class ATrustConnector implements SangforConnector {
         username: authenticated.username,
       ),
       signKey: generateATrustSignKey(),
-      socketFactory:
-          socketFactory ?? atrustDefaultSocketFactory(tlsPolicy),
+      socketFactory: socketFactory ?? atrustDefaultSocketFactory(tlsPolicy),
       nodeDialer: nodeDialer,
     );
     String? virtualAddress;
@@ -225,7 +224,8 @@ class ATrustConnector implements SangforConnector {
   /// Builds the connection id used by the L3 tunnel: uppercase MD5 of the
   /// device id followed by the current unix microsecond timestamp.
   static String buildATrustConnectionId(String deviceId) {
-    final digest = crypto.md5.convert(utf8.encode(deviceId)).toString().toUpperCase();
+    final digest =
+        crypto.md5.convert(utf8.encode(deviceId)).toString().toUpperCase();
     return '$digest-${DateTime.now().microsecondsSinceEpoch}';
   }
 

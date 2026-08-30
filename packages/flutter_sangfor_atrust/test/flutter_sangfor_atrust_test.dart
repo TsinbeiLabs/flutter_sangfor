@@ -496,9 +496,12 @@ void main() {
       rsaCertificate: encoded,
     );
 
-    expect(() => data.verifyCertificateIdentity(<Uint8List>[der]), returnsNormally);
+    expect(() => data.verifyCertificateIdentity(<Uint8List>[der]),
+        returnsNormally);
     expect(
-      () => data.verifyCertificateIdentity(<Uint8List>[Uint8List.fromList(<int>[9])]),
+      () => data.verifyCertificateIdentity(<Uint8List>[
+        Uint8List.fromList(<int>[9])
+      ]),
       throwsFormatException,
     );
   });
@@ -564,7 +567,8 @@ void main() {
     expect(policy.delayForAttempt(4), Duration.zero);
   });
 
-  test('bridges packets in both directions and closes both endpoints', () async {
+  test('bridges packets in both directions and closes both endpoints',
+      () async {
     final channel = FakeTunnelChannel();
     final device = FakePacketDevice();
     final io = ATrustTunnelIo();
@@ -583,7 +587,9 @@ void main() {
       ),
     ));
     await Future<void>.delayed(Duration.zero);
-    expect(device.written, <List<int>>[<int>[3, 4]]);
+    expect(device.written, <List<int>>[
+      <int>[3, 4]
+    ]);
 
     await io.close();
     expect(channel.closed, isTrue);
@@ -941,8 +947,8 @@ void main() {
   });
 
   test('parses IPv4, TCP, and UDP packet headers', () {
-    final tcpSegment =
-        buildTCPSegment(sourcePort: 1234, destinationPort: 443, flags: tcpSynFlag | tcpAckFlag);
+    final tcpSegment = buildTCPSegment(
+        sourcePort: 1234, destinationPort: 443, flags: tcpSynFlag | tcpAckFlag);
     final packet = buildIPv4Packet(payload: tcpSegment);
 
     final ip = ATrustIPv4Packet(packet);
@@ -962,7 +968,8 @@ void main() {
     expect(tcp.sequenceNumber, 100);
 
     final udpSegment = buildUDPSegment(sourcePort: 5353, destinationPort: 53);
-    final udpPacket = buildIPv4Packet(protocol: udpProtocol, payload: udpSegment);
+    final udpPacket =
+        buildIPv4Packet(protocol: udpProtocol, payload: udpSegment);
     final udp = ATrustUDPPacket(ATrustIPv4Packet(udpPacket).payload);
     expect(udp.valid, isTrue);
     expect(udp.sourcePort, 5353);
@@ -1172,8 +1179,9 @@ void main() {
     expect(message[2], 0x81);
     expect(message[3], 0x53);
     expect(message[4], 0x03);
-    final authJson = jsonDecode(utf8.decode(message.sublist(7, message.length - 10)))
-        as Map<String, Object?>;
+    final authJson =
+        jsonDecode(utf8.decode(message.sublist(7, message.length - 10)))
+            as Map<String, Object?>;
     expect(authJson['sid'], 'sid');
     expect(authJson['xRequestSig'], matches(RegExp(r'^[0-9A-F]{64}$')));
     final destination = message.sublist(message.length - 10);
@@ -1224,8 +1232,8 @@ void main() {
     expect(isEof, isFalse);
     expect(decoded, data);
 
-    final (eofData, eofFlag) =
-        ATrustTcpTunnelProtocol.parseDataFrame(ATrustTcpTunnelProtocol.eofFrame());
+    final (eofData, eofFlag) = ATrustTcpTunnelProtocol.parseDataFrame(
+        ATrustTcpTunnelProtocol.eofFrame());
     expect(eofFlag, isTrue);
     expect(eofData, isEmpty);
 

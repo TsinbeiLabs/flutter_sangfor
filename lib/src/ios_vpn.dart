@@ -44,7 +44,8 @@ class IosVpnDevice implements SangforPacketDevice {
     if (!Platform.isIOS) {
       throw UnsupportedError('IosVpnDevice requires iOS');
     }
-    final started = await _channel.invokeMethod<bool>('vpnStart', <String, Object?>{
+    final started =
+        await _channel.invokeMethod<bool>('vpnStart', <String, Object?>{
       'address': address,
       'prefixLength': prefixLength,
       'routes': routes,

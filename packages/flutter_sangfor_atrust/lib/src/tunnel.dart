@@ -421,7 +421,8 @@ class ATrustL3FlowTransport {
       throw ArgumentError('aTrust L3 auth request is too large');
     }
     final frame = BytesBuilder();
-    frame.add(<int>[ATrustL3Protocol.version, ATrustL3Command.authRequest.value]);
+    frame.add(
+        <int>[ATrustL3Protocol.version, ATrustL3Command.authRequest.value]);
     final length = ByteData(2)..setUint16(0, payload.length, Endian.big);
     frame.add(length.buffer.asUint8List());
     frame.add(payload);
@@ -451,7 +452,8 @@ class ATrustL3Protocol {
     final length = ByteData(2)..setUint16(0, payload.length, Endian.big);
     result.add(length.buffer.asUint8List());
     result.add(payload);
-    result.add(<int>[0x05, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    result
+        .add(<int>[0x05, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     return result.toBytes();
   }
 
@@ -600,8 +602,8 @@ class ATrustL3Protocol {
       if (idx + 2 > payload.length) {
         throw FormatException('packet length overflow');
       }
-      final plen = ByteData.sublistView(payload, idx, idx + 2)
-          .getUint16(0, Endian.big);
+      final plen =
+          ByteData.sublistView(payload, idx, idx + 2).getUint16(0, Endian.big);
       idx += 2;
       if (idx + plen > payload.length) {
         throw FormatException('packet data overflow');
@@ -760,14 +762,12 @@ class ATrustTunnelStateMachine {
     if (current == next) return true;
     return switch (current) {
       ATrustTunnelState.idle => next == ATrustTunnelState.dialing,
-      ATrustTunnelState.dialing =>
-        next == ATrustTunnelState.handshaking ||
-            next == ATrustTunnelState.closing,
+      ATrustTunnelState.dialing => next == ATrustTunnelState.handshaking ||
+          next == ATrustTunnelState.closing,
       ATrustTunnelState.handshaking =>
         next == ATrustTunnelState.active || next == ATrustTunnelState.closing,
-      ATrustTunnelState.active =>
-        next == ATrustTunnelState.reconnecting ||
-            next == ATrustTunnelState.closing,
+      ATrustTunnelState.active => next == ATrustTunnelState.reconnecting ||
+          next == ATrustTunnelState.closing,
       ATrustTunnelState.reconnecting =>
         next == ATrustTunnelState.dialing || next == ATrustTunnelState.closing,
       ATrustTunnelState.closing => next == ATrustTunnelState.closed,

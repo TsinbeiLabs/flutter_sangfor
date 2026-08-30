@@ -68,7 +68,8 @@ abstract class EasyConnectPacketTransport {
     if (remaining < packetLength) {
       return (packets, Uint8List.sublistView(stream, offset));
     }
-    packets.add(Uint8List.fromList(stream.sublist(offset, offset + packetLength)));
+    packets
+        .add(Uint8List.fromList(stream.sublist(offset, offset + packetLength)));
     offset += packetLength;
   }
   return (packets, Uint8List.sublistView(stream, offset));
@@ -119,9 +120,7 @@ class EasyConnectTunnel implements EasyConnectPacketTransport {
   @override
   Stream<Uint8List> get incoming => _incoming.stream;
   Uint8List? get token => _token;
-  String? get virtualAddress => _clientIp.isEmpty
-      ? null
-      : _clientIp.join('.');
+  String? get virtualAddress => _clientIp.isEmpty ? null : _clientIp.join('.');
   bool get isClosed => _closed;
 
   /// Runs the full bring-up sequence and returns the assigned client IP.
@@ -133,8 +132,7 @@ class EasyConnectTunnel implements EasyConnectPacketTransport {
     );
     try {
       final host = server.host;
-      final request =
-          'GET /por/conf.csp HTTP/1.1\r\nHost: $host\r\n'
+      final request = 'GET /por/conf.csp HTTP/1.1\r\nHost: $host\r\n'
           'Cookie: TWFID=$twfId\r\n\r\n'
           'GET /por/rclist.csp HTTP/1.1\r\nHost: $host\r\n'
           'Cookie: TWFID=$twfId\r\nConnection: close\r\n\r\n';
@@ -322,12 +320,12 @@ class EasyConnectTunnel implements EasyConnectPacketTransport {
     unawaited(
       tx
           .send(
-            EasyConnectTunnelProtocol.heartbeatPacket(
-              _clientIp,
-              _serverLanIp,
-              token,
-            ),
-          )
+        EasyConnectTunnelProtocol.heartbeatPacket(
+          _clientIp,
+          _serverLanIp,
+          token,
+        ),
+      )
           .catchError((Object error) {
         _fatal(error);
       }),

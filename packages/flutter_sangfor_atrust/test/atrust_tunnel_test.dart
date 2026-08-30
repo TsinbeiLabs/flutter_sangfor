@@ -118,7 +118,8 @@ void main() {
     expect(frames.last.payload, <int>[1, 2, 3]);
 
     expect(
-      () => decoder.add(Uint8List.fromList(<int>[0x06, 0x93, 0x00, 0x00, 0x00])),
+      () =>
+          decoder.add(Uint8List.fromList(<int>[0x06, 0x93, 0x00, 0x00, 0x00])),
       throwsFormatException,
     );
   });
@@ -169,7 +170,8 @@ void main() {
     expect(channel.sent.first[0], 0x05);
     expect(channel.sent.first[1], 0x01);
     expect(channel.sent.first[2], 0xD0);
-    expect(connection.handshakeResult?.virtualIP?.addresses, <String>['10.0.0.42']);
+    expect(connection.handshakeResult?.virtualIP?.addresses,
+        <String>['10.0.0.42']);
     expect(vips, isEmpty);
   });
 
@@ -283,9 +285,8 @@ void main() {
     expect(channel.sent, hasLength(2));
 
     final authFrame = channel.sent[1];
-    final conntrackHash =
-        (jsonDecode(utf8.decode(authFrame.sublist(4)))
-                as Map<String, Object?>)['conntrackHash'] as num;
+    final conntrackHash = (jsonDecode(utf8.decode(authFrame.sublist(4)))
+        as Map<String, Object?>)['conntrackHash'] as num;
     channel.incomingController.add(
       buildAuthRespFrame(conntrackHash.toInt(), '', status: 0x85),
     );
@@ -341,8 +342,7 @@ void main() {
     expect(best.containsKey('g3'), isFalse);
   });
 
-  test('route matching covers CIDR, ranges, domains, and TCP preference',
-      () {
+  test('route matching covers CIDR, ranges, domains, and TCP preference', () {
     final routes = <ATrustRoute>[
       const ATrustRoute(
         host: '10.1.0.0/16',

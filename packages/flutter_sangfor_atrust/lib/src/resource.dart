@@ -161,9 +161,8 @@ bool atrustRouteHostCovers(String host, String destIP) {
     if (base == null || prefix == null || dest == null) return false;
     if (prefix < 0 || prefix > 32) return false;
     if (prefix == 0) return true;
-    final mask = prefix == 32
-        ? 0xffffffff
-        : (0xffffffff << (32 - prefix)) & 0xffffffff;
+    final mask =
+        prefix == 32 ? 0xffffffff : (0xffffffff << (32 - prefix)) & 0xffffffff;
     return (base & mask) == (dest & mask);
   }
   if (host.contains('~')) {

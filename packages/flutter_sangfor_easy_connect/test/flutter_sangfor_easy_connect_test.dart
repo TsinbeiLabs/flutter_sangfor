@@ -48,19 +48,18 @@ class FakeDataPlaneHttpClient extends http.BaseClient {
     '/por/login_auth.csp':
         '<Auth><TwfID>twf-1</TwfID><RSA_ENCRYPT_KEY>${'F' * 256}</RSA_ENCRYPT_KEY><RSA_ENCRYPT_EXP>65537</RSA_ENCRYPT_EXP><CSRF_RAND_CODE>nonce</CSRF_RAND_CODE></Auth>',
     '/por/login_psw.csp': '<Auth><Result>1</Result></Auth>',
-    '/por/conf.csp':
-        '<Conf><L3VPN iptunDns="10.0.0.53" iptunDnsBak="10.0.0.54"/>'
+    '/por/conf.csp': '<Conf><L3VPN iptunDns="10.0.0.53" iptunDnsBak="10.0.0.54"/>'
         '<Mline enable="1" list="host1:443;host2:443"/><Htp mtu="1400"/></Conf>',
     '/por/rclist.csp':
         '<Resource><Rcs><Rc id="1" name="web" type="1" proto="0" '
-        'host="10.0.0.1;10.0.0.2" port="80;443"/>'
-        '<Rc id="2" name="l3" type="2" proto="-1" '
-        'host="10.1.0.0~10.1.255.255" port="0~65535"/></Rcs>'
-        '<Dns dnsserver="10.0.0.53;10.0.0.54"/>'
-        '<Other defaultRcId="1"/></Resource>',
+            'host="10.0.0.1;10.0.0.2" port="80;443"/>'
+            '<Rc id="2" name="l3" type="2" proto="-1" '
+            'host="10.1.0.0~10.1.255.255" port="0~65535"/></Rcs>'
+            '<Dns dnsserver="10.0.0.53;10.0.0.54"/>'
+            '<Other defaultRcId="1"/></Resource>',
     '/por/update_session.csp':
         '<Auth><Message>success</Message><ErrorCode>1</ErrorCode>'
-        '<TwfID>twf-1</TwfID></Auth>',
+            '<TwfID>twf-1</TwfID></Auth>',
   };
 
   @override

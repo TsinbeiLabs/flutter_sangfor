@@ -96,7 +96,8 @@ TlsRsaPublicKey parseRsaPublicKey(Uint8List certificateDer) {
   tbs.readConstructed(); // subject Name
   final spki = tbs.readConstructed(); // subjectPublicKeyInfo
   spki.readConstructed(); // algorithm AlgorithmIdentifier
-  final (bitTag, bitContent) = spki.readElement(); // subjectPublicKey BIT STRING
+  final (bitTag, bitContent) =
+      spki.readElement(); // subjectPublicKey BIT STRING
   if (bitTag != 0x03) {
     throw const FormatException('subjectPublicKey is not a BIT STRING');
   }

@@ -39,10 +39,8 @@ class TunDevice implements SangforPacketDevice {
       throw ArgumentError.value(name, 'name', 'must be 1-15 characters');
     }
     final libc = DynamicLibrary.process();
-    final openFn = libc.lookupFunction<
-      Int32 Function(Pointer<Int8>, Int32),
-      int Function(Pointer<Int8>, int)
-    >('open');
+    final openFn = libc.lookupFunction<Int32 Function(Pointer<Int8>, Int32),
+        int Function(Pointer<Int8>, int)>('open');
     final pathPtr = '/dev/net/tun'.toNativeUtf8().cast<Int8>();
     final fd = openFn(pathPtr, _oRdwr);
     calloc.free(pathPtr);
@@ -60,9 +58,8 @@ class TunDevice implements SangforPacketDevice {
       // ifr_flags lives 16 bytes into struct ifreq, after ifr_name.
       final flagsView = (request + 16).cast<Int16>();
       final ioctlFn = libc.lookupFunction<
-        Int32 Function(Int32, Uint64, Pointer<Void>),
-        int Function(int, int, Pointer<Void>)
-      >('ioctl');
+          Int32 Function(Int32, Uint64, Pointer<Void>),
+          int Function(int, int, Pointer<Void>)>('ioctl');
       flagsView.value = _iffTun | _iffNoPi;
       final result = ioctlFn(fd, _tunsetiffRequest, request.cast());
       if (result < 0) {
@@ -85,10 +82,8 @@ class TunDevice implements SangforPacketDevice {
   Future<void> close() => _device.close();
 
   static void _closeFd(DynamicLibrary libc, int fd) {
-    final closeFn = libc.lookupFunction<
-      Int32 Function(Int32),
-      int Function(int)
-    >('close');
+    final closeFn =
+        libc.lookupFunction<Int32 Function(Int32), int Function(int)>('close');
     closeFn(fd);
   }
 }

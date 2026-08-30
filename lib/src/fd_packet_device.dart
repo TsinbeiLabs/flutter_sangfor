@@ -58,10 +58,8 @@ class FdPacketDevice implements SangforPacketDevice {
     Uint8List? prependHeaderOnSend,
   }) async {
     final libc = DynamicLibrary.process();
-    final fcntlFn = libc.lookupFunction<
-      Int32 Function(Int32, Int32, Int64),
-      int Function(int, int, int)
-    >('fcntl');
+    final fcntlFn = libc.lookupFunction<Int32 Function(Int32, Int32, Int64),
+        int Function(int, int, int)>('fcntl');
     // F_SETFL (4) with O_NONBLOCK (0o4000 = 0x800).
     fcntlFn(fd, 4, 0x800);
     final header = prependHeaderOnSend ?? Uint8List(0);
@@ -96,9 +94,8 @@ class FdPacketDevice implements SangforPacketDevice {
     final length = packet.length + (header?.length ?? 0);
     final libc = DynamicLibrary.process();
     final writeFn = libc.lookupFunction<
-      Int32 Function(Int32, Pointer<Uint8>, Int32),
-      int Function(int, Pointer<Uint8>, int)
-    >('write');
+        Int32 Function(Int32, Pointer<Uint8>, Int32),
+        int Function(int, Pointer<Uint8>, int)>('write');
     final buffer = calloc<Uint8>(length);
     try {
       if (header != null) {
@@ -144,10 +141,8 @@ class FdPacketDevice implements SangforPacketDevice {
     }
     if (_ownsFd) {
       final libc = DynamicLibrary.process();
-      final closeFn = libc.lookupFunction<
-        Int32 Function(Int32),
-        int Function(int)
-      >('close');
+      final closeFn = libc
+          .lookupFunction<Int32 Function(Int32), int Function(int)>('close');
       closeFn(_fd);
     }
   }
@@ -170,13 +165,10 @@ class _FdReadParams {
 void _fdReadLoop(_FdReadParams params) {
   final libc = DynamicLibrary.process();
   final readFn = libc.lookupFunction<
-    Int32 Function(Int32, Pointer<Uint8>, Int32),
-    int Function(int, Pointer<Uint8>, int)
-  >('read');
-  final usleepFn = libc.lookupFunction<
-    Void Function(Uint32),
-    void Function(int)
-    >('usleep');
+      Int32 Function(Int32, Pointer<Uint8>, Int32),
+      int Function(int, Pointer<Uint8>, int)>('read');
+  final usleepFn =
+      libc.lookupFunction<Void Function(Uint32), void Function(int)>('usleep');
   final buffer = calloc<Uint8>(_maxPacketSize);
   final control = ReceivePort();
   var stopped = false;
@@ -205,9 +197,8 @@ void _fdReadLoop(_FdReadParams params) {
 }
 
 int fdErrno(DynamicLibrary libc) {
-  final errnoLocation = libc.lookupFunction<
-    Pointer<Int32> Function(),
-    Pointer<Int32> Function()
-  >('__errno_location');
+  final errnoLocation =
+      libc.lookupFunction<Pointer<Int32> Function(), Pointer<Int32> Function()>(
+          '__errno_location');
   return errnoLocation().value;
 }

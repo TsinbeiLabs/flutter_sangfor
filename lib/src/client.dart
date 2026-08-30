@@ -102,8 +102,7 @@ class SangforPlatformConnector implements SangforConnector {
 
 /// Product-neutral session manager.
 class SangforClient {
-  SangforClient({required SangforConnector connector})
-      : _connector = connector;
+  SangforClient({required SangforConnector connector}) : _connector = connector;
 
   final SangforConnector _connector;
   final StreamController<SangforConnectionEvent> _events =

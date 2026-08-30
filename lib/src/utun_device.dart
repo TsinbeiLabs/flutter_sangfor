@@ -37,10 +37,8 @@ class UtunDevice implements SangforPacketDevice {
       throw UnsupportedError('UtunDevice requires macOS');
     }
     final libc = DynamicLibrary.process();
-    final socketFn = libc.lookupFunction<
-      Int32 Function(Int32, Int32, Int32),
-      int Function(int, int, int)
-    >('socket');
+    final socketFn = libc.lookupFunction<Int32 Function(Int32, Int32, Int32),
+        int Function(int, int, int)>('socket');
     final fd = socketFn(_afSysControl, 2 /* SOCK_DGRAM */, _sysProtoControl);
     if (fd < 0) {
       throw StateError(
@@ -56,9 +54,8 @@ class UtunDevice implements SangforPacketDevice {
         ctlInfo[4 + index] = name[index];
       }
       final ioctlFn = libc.lookupFunction<
-        Int32 Function(Int32, Uint64, Pointer<Void>),
-        int Function(int, int, Pointer<Void>)
-      >('ioctl');
+          Int32 Function(Int32, Uint64, Pointer<Void>),
+          int Function(int, int, Pointer<Void>)>('ioctl');
       final result = ioctlFn(fd, _ctlIoCgId, ctlInfo.cast());
       if (result < 0) {
         final error = _macOSErrno(libc);
@@ -79,9 +76,8 @@ class UtunDevice implements SangforPacketDevice {
         sockaddrCtl.cast<Int16>()[1] = requestedUnit; // sc_unit
         sockaddrCtl.cast<Int32>()[1] = ctlId; // sc_id
         final connectFn = libc.lookupFunction<
-          Int32 Function(Int32, Pointer<Uint8>, Uint32),
-          int Function(int, Pointer<Uint8>, int)
-        >('connect');
+            Int32 Function(Int32, Pointer<Uint8>, Uint32),
+            int Function(int, Pointer<Uint8>, int)>('connect');
         final connectResult = connectFn(fd, sockaddrCtl, 28);
         if (connectResult < 0) {
           final error = _macOSErrno(libc);
@@ -115,9 +111,8 @@ class UtunDevice implements SangforPacketDevice {
       lenPtr.value = 64;
       try {
         final getsocknameFn = libc.lookupFunction<
-          Int32 Function(Int32, Pointer<Uint8>, Pointer<Int32>),
-          int Function(int, Pointer<Uint8>, Pointer<Int32>)
-        >('getsockname');
+            Int32 Function(Int32, Pointer<Uint8>, Pointer<Int32>),
+            int Function(int, Pointer<Uint8>, Pointer<Int32>)>('getsockname');
         final result = getsocknameFn(fd, sockaddr, lenPtr);
         if (result < 0) {
           return 'utun?';
@@ -145,18 +140,15 @@ class UtunDevice implements SangforPacketDevice {
   Future<void> close() => _device.close();
 
   static void _closeFd(DynamicLibrary libc, int fd) {
-    final closeFn = libc.lookupFunction<
-      Int32 Function(Int32),
-      int Function(int)
-    >('close');
+    final closeFn =
+        libc.lookupFunction<Int32 Function(Int32), int Function(int)>('close');
     closeFn(fd);
   }
 }
 
 int _macOSErrno(DynamicLibrary libc) {
-  final errorFn = libc.lookupFunction<
-    Pointer<Int32> Function(),
-    Pointer<Int32> Function()
-  >('__error');
+  final errorFn =
+      libc.lookupFunction<Pointer<Int32> Function(), Pointer<Int32> Function()>(
+          '__error');
   return errorFn().value;
 }

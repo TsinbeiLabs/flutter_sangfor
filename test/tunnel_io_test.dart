@@ -103,8 +103,16 @@ void main() {
     );
     client.add(
       Uint8List.fromList([
-        0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
-        (echoServer.port >> 8) & 0xff, echoServer.port & 0xff,
+        0x05,
+        0x01,
+        0x00,
+        0x01,
+        127,
+        0,
+        0,
+        1,
+        (echoServer.port >> 8) & 0xff,
+        echoServer.port & 0xff,
       ]),
     );
     final greeting = await reader.next();
@@ -182,8 +190,7 @@ void main() {
     await echoServer.close();
   });
 
-  test('SOCKS5 server replies with an error when the dial fails',
-      () async {
+  test('SOCKS5 server replies with an error when the dial fails', () async {
     final server = SangforSocks5Server(
       dialer: (host, port) async => throw const SocketException('no route'),
     );
@@ -198,7 +205,16 @@ void main() {
     await reader.next();
     client.add(
       Uint8List.fromList([
-        0x05, 0x01, 0x00, 0x01, 10, 1, 2, 3, 0x00, 0x50,
+        0x05,
+        0x01,
+        0x00,
+        0x01,
+        10,
+        1,
+        2,
+        3,
+        0x00,
+        0x50,
       ]),
     );
     final reply = await reader.next();
@@ -270,8 +286,7 @@ void main() {
     expect(tunnel.sent, isEmpty);
   });
 
-  test('SOCKS5 server closes sessions when the token is cancelled',
-      () async {
+  test('SOCKS5 server closes sessions when the token is cancelled', () async {
     final token = SangforCancellationToken();
     final neverCompletes = Completer<SangforTcpStream>();
     final server = SangforSocks5Server(
@@ -289,7 +304,16 @@ void main() {
     await reader.next();
     client.add(
       Uint8List.fromList([
-        0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50,
+        0x05,
+        0x01,
+        0x00,
+        0x01,
+        127,
+        0,
+        0,
+        1,
+        0x00,
+        0x50,
       ]),
     );
     // The dial is pending; cancelling must tear the session down.

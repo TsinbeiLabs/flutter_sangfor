@@ -144,10 +144,10 @@ class ATrustSessionClient extends http.BaseClient {
       final validDomain = uri.host == domain || uri.host.endsWith('.$domain');
       if (!validDomain) continue;
       final maxAgeExpired = maxAge != null && maxAge <= 0;
-      final expiresAt = maxAge == null
-          ? expires
-          : receivedAt.add(Duration(seconds: maxAge));
-      if (cookieValue.isEmpty || maxAgeExpired ||
+      final expiresAt =
+          maxAge == null ? expires : receivedAt.add(Duration(seconds: maxAge));
+      if (cookieValue.isEmpty ||
+          maxAgeExpired ||
           (expiresAt != null && !expiresAt.isAfter(DateTime.now().toUtc()))) {
         _cookies.remove(name);
       } else {

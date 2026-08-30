@@ -22,7 +22,7 @@ class SangforSocks5Server {
     this.dialTimeout = const Duration(seconds: 30),
     this.onDialError,
     this.cancellationToken,
-  })  : assert(port >= 0 && port <= 65535);
+  }) : assert(port >= 0 && port <= 65535);
 
   final SangforTcpDialer dialer;
   final InternetAddress? listenAddress;
@@ -232,6 +232,7 @@ class SangforSocks5ClientSession {
     _phase = _SocksPhase.pumping;
     _handleConnect(command, host, port);
   }
+
   Future<void> _handleConnect(int command, String host, int port) async {
     if (command != 0x01) {
       _reply(0x07);
@@ -246,9 +247,8 @@ class SangforSocks5ClientSession {
     SangforTcpStream stream;
     try {
       final token = cancellationToken;
-      final dial = token == null
-          ? _dialer(host, port)
-          : token.race(_dialer(host, port));
+      final dial =
+          token == null ? _dialer(host, port) : token.race(_dialer(host, port));
       stream = await dial.timeout(dialTimeout);
     } on Object catch (error) {
       onDialError?.call(host, port, error);

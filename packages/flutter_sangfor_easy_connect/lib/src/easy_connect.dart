@@ -43,7 +43,8 @@ class EasyConnectApiException implements Exception {
 }
 
 class EasyConnectLoginSession {
-  EasyConnectLoginSession({http.Client? client}) : _client = client ?? http.Client();
+  EasyConnectLoginSession({http.Client? client})
+      : _client = client ?? http.Client();
 
   final http.Client _client;
   String? _twfId;
@@ -80,13 +81,15 @@ class EasyConnectLoginSession {
           'EasyConnect SMS code is required',
         );
       }
-      await _postForm(options.server, '/por/login_sms.csp', const <String, String>{});
+      await _postForm(
+          options.server, '/por/login_sms.csp', const <String, String>{});
       authResponse = await _postForm(
         options.server,
         '/por/login_sms1.csp',
         <String, String>{'svpn_inputsms': await provider()},
       );
-    } else if (_contains(authResponse, '<NextService>auth/token</NextService>')) {
+    } else if (_contains(
+        authResponse, '<NextService>auth/token</NextService>')) {
       final provider = options.totpCodeProvider;
       if (provider == null) {
         throw const SangforException(
@@ -103,7 +106,8 @@ class EasyConnectLoginSession {
     if (!_contains(authResponse, '<Result>1</Result>') &&
         !_contains(authResponse, 'Auth sms suc') &&
         !_contains(authResponse, 'Totp auth succ')) {
-      throw const EasyConnectApiException('EasyConnect password authentication failed');
+      throw const EasyConnectApiException(
+          'EasyConnect password authentication failed');
     }
     return EasyConnectSession(twfId: _twfId!);
   }
@@ -139,12 +143,13 @@ class EasyConnectLoginSession {
   }
 
   Future<_AuthResponse> _getAuth(Uri server) async {
-    final response = await _request(server, '/por/login_auth.csp', method: 'GET',
-        query: const <String, String>{'apiversion': '1'});
+    final response = await _request(server, '/por/login_auth.csp',
+        method: 'GET', query: const <String, String>{'apiversion': '1'});
     final twfId = _tag(response, 'TwfID');
     final modulus = _tag(response, 'RSA_ENCRYPT_KEY');
     if (twfId.isEmpty || modulus.isEmpty) {
-      throw const EasyConnectApiException('EasyConnect auth response is incomplete');
+      throw const EasyConnectApiException(
+          'EasyConnect auth response is incomplete');
     }
     return _AuthResponse(
       twfId: twfId,
@@ -226,10 +231,13 @@ String _encryptPassword(String password, String modulusText, int exponent) {
   final size = (modulus.bitLength + 7) ~/ 8;
   final plaintext = utf8.encode(password);
   final chunkSize = size - 11;
-  if (chunkSize <= 0) throw const EasyConnectApiException('EasyConnect RSA key is too small');
+  if (chunkSize <= 0) {
+    throw const EasyConnectApiException('EasyConnect RSA key is too small');
+  }
   final output = <int>[];
   for (var offset = 0; offset < plaintext.length; offset += chunkSize) {
-    final chunk = plaintext.sublist(offset, min(offset + chunkSize, plaintext.length));
+    final chunk =
+        plaintext.sublist(offset, min(offset + chunkSize, plaintext.length));
     final padding = <int>[];
     final random = Random.secure();
     while (padding.length < size - chunk.length - 3) {

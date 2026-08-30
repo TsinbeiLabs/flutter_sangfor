@@ -29,8 +29,7 @@ class SocketTcpStream extends SangforTcpStream {
   }
 
   final Socket _socket;
-  final StreamController<Uint8List> _incoming =
-      StreamController<Uint8List>();
+  final StreamController<Uint8List> _incoming = StreamController<Uint8List>();
   StreamSubscription<List<int>>? _subscription;
   bool _closed = false;
 

@@ -39,7 +39,8 @@ class EasyConnectTcpProxy {
 
   final Map<String, EasyConnectTcpConnection> _connections =
       <String, EasyConnectTcpConnection>{};
-  final Map<String, EasyConnectUdpFlow> _udpFlows = <String, EasyConnectUdpFlow>{};
+  final Map<String, EasyConnectUdpFlow> _udpFlows =
+      <String, EasyConnectUdpFlow>{};
   final Random _random = Random();
   StreamSubscription<Uint8List>? _subscription;
   final List<int> _sourceIp;
@@ -159,8 +160,8 @@ class EasyConnectTcpProxy {
     if (ip.protocol == ipProtocolTcp) {
       final segment = parseTcpSegment(ip.srcIp, ip.dstIp, ip.payload);
       if (segment == null || !segment.validChecksum) return;
-      final connection =
-          _connections['${ip.srcIp.join('.')}:${segment.srcPort}:${segment.dstPort}'];
+      final connection = _connections[
+          '${ip.srcIp.join('.')}:${segment.srcPort}:${segment.dstPort}'];
       connection?._handleSegment(segment);
     } else if (ip.protocol == ipProtocolUdp) {
       final datagram = parseUdpDatagram(ip.payload);
@@ -301,8 +302,7 @@ class EasyConnectTcpConnection extends SangforTcpStream {
     }
     _pending.addAll(data);
     _flush();
-    while (!_tornDown &&
-        _pending.length + _inFlight() > _sendBufferLimit) {
+    while (!_tornDown && _pending.length + _inFlight() > _sendBufferLimit) {
       final waiter = Completer<void>();
       _drainWaiters.add(waiter);
       await waiter.future;
@@ -437,9 +437,7 @@ class EasyConnectTcpConnection extends SangforTcpStream {
       while (true) {
         final usable = _peerWindow - _inFlight();
         if (usable <= 0 || _pending.isEmpty) break;
-        final take = _pending.length < _mss
-            ? _pending.length
-            : _mss;
+        final take = _pending.length < _mss ? _pending.length : _mss;
         final chunkSize = take < usable ? take : usable;
         if (chunkSize <= 0) break;
         final chunk = Uint8List.fromList(_pending.sublist(0, chunkSize));
@@ -711,4 +709,3 @@ class EasyConnectTcpResetException implements Exception {
   @override
   String toString() => 'EasyConnectTcpResetException: $message';
 }
-

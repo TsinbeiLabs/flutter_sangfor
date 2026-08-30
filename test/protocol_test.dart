@@ -11,7 +11,8 @@ void main() {
       authType: SangforAuthType.cas,
     );
 
-    expect(request.endpoint, Uri.parse('https://vpn.example.test/portal/auth/cas'));
+    expect(request.endpoint,
+        Uri.parse('https://vpn.example.test/portal/auth/cas'));
     expect(request.fields, <String, String>{
       'username': 'alice',
       'password': 'secret',

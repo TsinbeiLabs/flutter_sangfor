@@ -18,12 +18,15 @@ class SangforAuthRequest {
 
   /// Resolves the authentication endpoint below the supplied server root.
   Uri get endpoint {
-    final rootPath = server.path.endsWith('/') ? server.path : '${server.path}/';
-    return server.replace(
-      path: rootPath,
-      query: '',
-      fragment: '',
-    ).resolve(authType.value);
+    final rootPath =
+        server.path.endsWith('/') ? server.path : '${server.path}/';
+    return server
+        .replace(
+          path: rootPath,
+          query: '',
+          fragment: '',
+        )
+        .resolve(authType.value);
   }
 
   /// Produces the transport-neutral request fields.

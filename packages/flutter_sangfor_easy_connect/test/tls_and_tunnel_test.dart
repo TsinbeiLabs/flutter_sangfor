@@ -30,8 +30,7 @@ Uint8List _pemDer(String pem) {
 }
 
 class PipedTransport implements TlsTransport {
-  final StreamController<Uint8List> _incoming =
-      StreamController<Uint8List>();
+  final StreamController<Uint8List> _incoming = StreamController<Uint8List>();
   PipedTransport? peer;
 
   @override
@@ -194,8 +193,7 @@ class TestTlsServer {
           (_handshakeBuffer[2] << 8) |
           _handshakeBuffer[3];
       if (_handshakeBuffer.length < 4 + length) return;
-      final body =
-          Uint8List.fromList(_handshakeBuffer.sublist(4, 4 + length));
+      final body = Uint8List.fromList(_handshakeBuffer.sublist(4, 4 + length));
       _handshakeBuffer.removeRange(0, 4 + length);
       if (hsType == 20 && _clientCcsSeen) {
         // Finished verify data excludes the Finished itself: verify first,
@@ -224,9 +222,8 @@ class TestTlsServer {
 
   void _parseClientHello(Uint8List body) {
     final offered = ByteData.sublistView(body).getUint16(0, Endian.big);
-    _negotiatedVersion = negotiateTls11 || offered <= tlsVersion11
-        ? tlsVersion11
-        : tlsVersion12;
+    _negotiatedVersion =
+        negotiateTls11 || offered <= tlsVersion11 ? tlsVersion11 : tlsVersion12;
     _clientRandom = Uint8List.sublistView(body, 2, 34);
     final sessionIdLength = body[34];
     _sessionId = Uint8List.sublistView(body, 35, 35 + sessionIdLength);
@@ -254,8 +251,7 @@ class TestTlsServer {
 
   Future<void> _sendServerFlight() async {
     final serverHelloBody = BytesBuilder();
-    final version = ByteData(2)
-      ..setUint16(0, _negotiatedVersion);
+    final version = ByteData(2)..setUint16(0, _negotiatedVersion);
     serverHelloBody.add(version.buffer.asUint8List());
     serverHelloBody.add(_serverRandom);
     serverHelloBody.addByte(_sessionId.length);
@@ -344,7 +340,10 @@ class TestTlsServer {
       seed = SHA256Digest().process(logBytes);
     } else {
       seed = Uint8List.fromList(
-        <int>[...MD5Digest().process(logBytes), ...SHA1Digest().process(logBytes)],
+        <int>[
+          ...MD5Digest().process(logBytes),
+          ...SHA1Digest().process(logBytes)
+        ],
       );
     }
     if (tls12) {
@@ -587,7 +586,8 @@ void main() {
 
     final received = <Uint8List>[];
     socket.incoming.listen(received.add);
-    final payload = Uint8List.fromList(List<int>.generate(300, (i) => i & 0xff));
+    final payload =
+        Uint8List.fromList(List<int>.generate(300, (i) => i & 0xff));
     await socket.send(payload);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(server.echoLog, hasLength(1));
@@ -703,7 +703,8 @@ void main() {
 
     // Heartbeats flow on the command and TX streams.
     await Future<void>.delayed(const Duration(milliseconds: 120));
-    final commandOps = connections[1].sent
+    final commandOps = connections[1]
+        .sent
         .skip(1)
         .map(
           (message) =>
@@ -711,10 +712,8 @@ void main() {
         )
         .toSet();
     expect(commandOps, contains(EasyConnectTunnelProtocol.commandHeartbeatOp));
-    final txHeartbeats = connections[3]
-        .sent
-        .where((message) => message.length == 76)
-        .toList();
+    final txHeartbeats =
+        connections[3].sent.where((message) => message.length == 76).toList();
     expect(txHeartbeats, isNotEmpty);
 
     // Fatal control code closes the tunnel.
@@ -804,7 +803,8 @@ void main() {
     final connector = EasyConnectConnector(
       loginSession: EasyConnectLoginSession(client: client),
       connectionFactory: (hello) async => FakeTunnelTlsConnection(
-        sessionId: hello.sessionId ?? Uint8List.fromList(List<int>.filled(32, 7)),
+        sessionId:
+            hello.sessionId ?? Uint8List.fromList(List<int>.filled(32, 7)),
       ),
     );
     final session = await connector.connect(
@@ -858,7 +858,8 @@ BigInt _parseBigInt(Uint8List content) {
   return value;
 }
 
-Uint8List _expand(String algorithm, Uint8List secret, Uint8List seed, int length) {
+Uint8List _expand(
+    String algorithm, Uint8List secret, Uint8List seed, int length) {
   Uint8List hmac(Uint8List key, List<int> data) {
     if (algorithm == 'md5') {
       final h = HMac(MD5Digest(), 64)..init(KeyParameter(key));
@@ -881,12 +882,12 @@ class _TunnelLoginHttpClient extends http.BaseClient {
   final Map<String, String> bodies = <String, String>{
     '/por/login_auth.csp':
         '<Auth><TwfID>twf-0123456789ab</TwfID><RSA_ENCRYPT_KEY>${'F' * 256}'
-        '</RSA_ENCRYPT_KEY><RSA_ENCRYPT_EXP>65537</RSA_ENCRYPT_EXP>'
-        '<CSRF_RAND_CODE>nonce</CSRF_RAND_CODE></Auth>',
+            '</RSA_ENCRYPT_KEY><RSA_ENCRYPT_EXP>65537</RSA_ENCRYPT_EXP>'
+            '<CSRF_RAND_CODE>nonce</CSRF_RAND_CODE></Auth>',
     '/por/login_psw.csp': '<Auth><Result>1</Result></Auth>',
     '/por/conf.csp':
         '<Conf><L3VPN iptunDns="10.0.0.53" iptunDnsBak="10.0.0.54"/>'
-        '<Mline enable="1" list="host1:443"/><Htp mtu="1400"/></Conf>',
+            '<Mline enable="1" list="host1:443"/><Htp mtu="1400"/></Conf>',
     '/por/rclist.csp': '<Resource><Rcs></Rcs></Resource>',
     '/por/update_session.csp':
         '<Auth><Message>success</Message><ErrorCode>1</ErrorCode></Auth>',

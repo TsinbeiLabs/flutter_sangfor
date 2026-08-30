@@ -71,7 +71,8 @@ class ATrustTunnel {
         _signKey = Uint8List.fromList(signKey),
         _socketFactory = socketFactory ?? atrustDefaultSocketFactory(),
         _nodeDialer = nodeDialer ?? atrustTcpProbeDialer,
-        _bestNodes = bestNodes != null ? Map<String, String>.of(bestNodes) : null;
+        _bestNodes =
+            bestNodes != null ? Map<String, String>.of(bestNodes) : null;
 
   final ATrustResource resource;
   final ATrustL3ClientInfo _info;
@@ -96,8 +97,9 @@ class ATrustTunnel {
   Stream<Uint8List> get incoming => _incoming.stream;
   String? get virtualAddress => _virtualAddress;
   bool get isClosed => _closed;
-  Map<String, String> get bestNodes =>
-      _bestNodes == null ? const <String, String>{} : Map<String, String>.of(_bestNodes!);
+  Map<String, String> get bestNodes => _bestNodes == null
+      ? const <String, String>{}
+      : Map<String, String>.of(_bestNodes!);
 
   /// Probes nodes, acquires the client virtual IP, and opens the tunnel to
   /// the major node group.
@@ -297,8 +299,7 @@ class ATrustTunnel {
       await for (final chunk in channel.incoming) {
         final parsed = parser.add(chunk);
         if (parsed != null) {
-          final addresses = parsed.$1.virtualIP?.addresses ??
-              const <String>[];
+          final addresses = parsed.$1.virtualIP?.addresses ?? const <String>[];
           for (final candidate in addresses) {
             if (candidate.contains('.') && !candidate.contains(':')) {
               return candidate;

@@ -299,8 +299,8 @@ class ATrustL3TunnelConnection {
           if (parsed != null) {
             handshakeDone = true;
             _handshakeResult = parsed.$1;
-            final addresses = parsed.$1.virtualIP?.addresses ??
-                const <String>[];
+            final addresses =
+                parsed.$1.virtualIP?.addresses ?? const <String>[];
             if (addresses.isNotEmpty) {
               onVip?.call(addresses);
             }
@@ -454,8 +454,7 @@ class ATrustL3TunnelConnection {
         ? Map<String, Object?>.from(decoded['data'] as Map)
         : <String, Object?>{};
     final conntrackHash = _asInt(data['conntrackHash']);
-    var flow =
-        conntrackHash != null ? tracker.flowById(conntrackHash) : null;
+    var flow = conntrackHash != null ? tracker.flowById(conntrackHash) : null;
     flow ??= _findFlowByIp(data['ip']);
     if (flow == null) {
       if (conntrackHash != null) {

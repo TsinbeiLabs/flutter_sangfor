@@ -49,8 +49,7 @@ class WintunDevice implements SangforPacketDevice {
   final String _dllPath;
   final ReceivePort _receivePort;
 
-  final StreamController<Uint8List> _incoming =
-      StreamController<Uint8List>();
+  final StreamController<Uint8List> _incoming = StreamController<Uint8List>();
   late final Future<void> _readIsolate;
   StreamSubscription<Object?>? _incomingSubscription;
   bool _closed = false;
@@ -82,11 +81,10 @@ class WintunDevice implements SangforPacketDevice {
       );
     }
     final lib = DynamicLibrary.open(path);
-    final createAdapter = lib
-        .lookupFunction<
-          Pointer<Void> Function(Pointer<Utf16>, Pointer<Utf16>, Pointer<Void>),
-          Pointer<Void> Function(Pointer<Utf16>, Pointer<Utf16>, Pointer<Void>)
-        >('WintunCreateAdapter');
+    final createAdapter = lib.lookupFunction<
+        Pointer<Void> Function(Pointer<Utf16>, Pointer<Utf16>, Pointer<Void>),
+        Pointer<Void> Function(Pointer<Utf16>, Pointer<Utf16>,
+            Pointer<Void>)>('WintunCreateAdapter');
     final namePtr = name.toNativeUtf16();
     final typePtr = tunnelType.toNativeUtf16();
     Pointer<Void> adapter;
@@ -103,9 +101,8 @@ class WintunDevice implements SangforPacketDevice {
       );
     }
     final startSession = lib.lookupFunction<
-      Pointer<Void> Function(Pointer<Void>, Uint32),
-      Pointer<Void> Function(Pointer<Void>, int)
-    >('WintunStartSession');
+        Pointer<Void> Function(Pointer<Void>, Uint32),
+        Pointer<Void> Function(Pointer<Void>, int)>('WintunStartSession');
     final session = startSession(adapter, ringCapacity);
     if (session == nullptr) {
       _closeAdapter(lib, adapter);
@@ -129,9 +126,8 @@ class WintunDevice implements SangforPacketDevice {
     Pointer<Void> session,
   ) {
     final getReadWaitEvent = lib.lookupFunction<
-      Pointer<Void> Function(Pointer<Void>),
-      Pointer<Void> Function(Pointer<Void>)
-    >('WintunGetReadWaitEvent');
+        Pointer<Void> Function(Pointer<Void>),
+        Pointer<Void> Function(Pointer<Void>)>('WintunGetReadWaitEvent');
     final event = getReadWaitEvent(session);
     if (event == nullptr) {
       throw StateError('WintunGetReadWaitEvent failed (${_lastError()})');
@@ -145,13 +141,12 @@ class WintunDevice implements SangforPacketDevice {
   Future<void> send(Uint8List packet) async {
     if (_closed) return;
     final allocate = _lib.lookupFunction<
-      Pointer<Uint8> Function(Pointer<Void>, Uint32),
-      Pointer<Uint8> Function(Pointer<Void>, int)
-    >('WintunAllocateSendPacket');
+        Pointer<Uint8> Function(Pointer<Void>, Uint32),
+        Pointer<Uint8> Function(
+            Pointer<Void>, int)>('WintunAllocateSendPacket');
     final sendPacket = _lib.lookupFunction<
-      Void Function(Pointer<Void>, Pointer<Uint8>),
-      void Function(Pointer<Void>, Pointer<Uint8>)
-    >('WintunSendPacket');
+        Void Function(Pointer<Void>, Pointer<Uint8>),
+        void Function(Pointer<Void>, Pointer<Uint8>)>('WintunSendPacket');
     final buffer = allocate(_session, packet.length);
     if (buffer == nullptr) {
       final error = _lastError();
@@ -166,10 +161,8 @@ class WintunDevice implements SangforPacketDevice {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    final endSession = _lib.lookupFunction<
-      Void Function(Pointer<Void>),
-      void Function(Pointer<Void>)
-    >('WintunEndSession');
+    final endSession = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('WintunEndSession');
     endSession(_session);
     await _readIsolate;
     await _incomingSubscription?.cancel();
@@ -181,10 +174,8 @@ class WintunDevice implements SangforPacketDevice {
   }
 
   static void _closeAdapter(DynamicLibrary lib, Pointer<Void> adapter) {
-    final closeAdapter = lib.lookupFunction<
-      Void Function(Pointer<Void>),
-      void Function(Pointer<Void>)
-    >('WintunCloseAdapter');
+    final closeAdapter = lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('WintunCloseAdapter');
     closeAdapter(adapter);
   }
 
@@ -287,18 +278,17 @@ void _wintunReadLoop(_WintunReadParams params) {
   final readWaitEvent = Pointer<Void>.fromAddress(params.readWaitEventAddress);
   final lib = DynamicLibrary.open(params.dllPath);
   final receivePacket = lib.lookupFunction<
-    Pointer<Uint8> Function(Pointer<Void>, Pointer<Uint32>),
-    Pointer<Uint8> Function(Pointer<Void>, Pointer<Uint32>)
-  >('WintunReceivePacket');
+      Pointer<Uint8> Function(Pointer<Void>, Pointer<Uint32>),
+      Pointer<Uint8> Function(
+          Pointer<Void>, Pointer<Uint32>)>('WintunReceivePacket');
   final releasePacket = lib.lookupFunction<
-    Void Function(Pointer<Void>, Pointer<Uint8>),
-    void Function(Pointer<Void>, Pointer<Uint8>)
-  >('WintunReleaseReceivePacket');
+      Void Function(Pointer<Void>, Pointer<Uint8>),
+      void Function(
+          Pointer<Void>, Pointer<Uint8>)>('WintunReleaseReceivePacket');
   final kernel32 = DynamicLibrary.open('kernel32.dll');
   final waitForSingleObject = kernel32.lookupFunction<
-    Int32 Function(Pointer<Void>, Uint32),
-    int Function(Pointer<Void>, int)
-  >('WaitForSingleObject');
+      Int32 Function(Pointer<Void>, Uint32),
+      int Function(Pointer<Void>, int)>('WaitForSingleObject');
   final lastError = DynamicLibrary.process()
       .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
   final size = calloc<Uint32>();

@@ -169,12 +169,12 @@ class EasyConnectTlsSocket implements EasyConnectTlsConnection {
     if (_closed) throw StateError('TLS socket is closed');
     final writeCrypto = _writeCrypto;
     for (var offset = 0; offset < data.length; offset += 16384) {
-      final end =
-          offset + 16384 > data.length ? data.length : offset + 16384;
+      final end = offset + 16384 > data.length ? data.length : offset + 16384;
       final fragment = Uint8List.sublistView(data, offset, end);
       final payload = writeCrypto == null
           ? fragment
-          : writeCrypto.seal(tlsContentTypeAppData, _negotiatedVersion, fragment);
+          : writeCrypto.seal(
+              tlsContentTypeAppData, _negotiatedVersion, fragment);
       await _transport.send(
         _buildTlsRecord(tlsContentTypeAppData, _negotiatedVersion, payload),
       );
@@ -232,8 +232,7 @@ class EasyConnectTlsClient {
     TlsTransport? transport,
   }) async {
     final spec = hello ?? TlsClientHelloSpec.standard();
-    final tlsTransport =
-        transport ?? await _defaultTransport(host, port);
+    final tlsTransport = transport ?? await _defaultTransport(host, port);
     return connectTransport(
       tlsTransport,
       hello: spec,
@@ -479,8 +478,7 @@ class _TlsHandshake {
           (_handshakeBuffer[2] << 8) |
           _handshakeBuffer[3];
       if (_handshakeBuffer.length < 4 + length) return;
-      final body =
-          Uint8List.fromList(_handshakeBuffer.sublist(4, 4 + length));
+      final body = Uint8List.fromList(_handshakeBuffer.sublist(4, 4 + length));
       _handshakeBuffer.removeRange(0, 4 + length);
       if (type == 20) {
         // Finished verify data hashes all messages up to but excluding this
@@ -717,7 +715,8 @@ class _TlsHandshake {
         _buildTlsRecord(
           tlsContentTypeHandshake,
           _negotiatedVersion,
-          _writeCrypto!.seal(tlsContentTypeHandshake, _negotiatedVersion, finished),
+          _writeCrypto!
+              .seal(tlsContentTypeHandshake, _negotiatedVersion, finished),
         ),
       );
     } on Object catch (error, stackTrace) {
@@ -737,7 +736,10 @@ class _TlsHandshake {
       seed = SHA256Digest().process(logBytes);
     } else {
       seed = Uint8List.fromList(
-        <int>[...MD5Digest().process(logBytes), ...SHA1Digest().process(logBytes)],
+        <int>[
+          ...MD5Digest().process(logBytes),
+          ...SHA1Digest().process(logBytes)
+        ],
       );
     }
     if (tls12) {

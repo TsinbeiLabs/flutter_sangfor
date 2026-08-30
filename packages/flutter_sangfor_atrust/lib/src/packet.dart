@@ -36,8 +36,7 @@ class ATrustIPv4Packet {
 
   String get sourceIP => '${data[12]}.${data[13]}.${data[14]}.${data[15]}';
 
-  String get destinationIP =>
-      '${data[16]}.${data[17]}.${data[18]}.${data[19]}';
+  String get destinationIP => '${data[16]}.${data[17]}.${data[18]}.${data[19]}';
 
   Uint8List get payload => Uint8List.sublistView(data, headerLength);
 }
@@ -95,8 +94,7 @@ class ATrustPacketMeta {
   final String destinationAddress;
   final int destinationPort;
 
-  String get key =>
-      '$atype:$protocol:$sourceAddress:$sourcePort-'
+  String get key => '$atype:$protocol:$sourceAddress:$sourcePort-'
       '$destinationAddress:$destinationPort';
 
   ATrustPacketMeta get reversed => ATrustPacketMeta(

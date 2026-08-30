@@ -104,12 +104,10 @@ class EasyConnectResourceList {
       }
     }
     final dns =
-        RegExp(r'<Dns[^>]*dnsserver="([^"]*)"').firstMatch(xml)?.group(1) ??
+        RegExp(r'<Dns[^>]*dnsserver="([^"]*)"').firstMatch(xml)?.group(1) ?? '';
+    final defaultId =
+        RegExp(r'<Other[^>]*defaultRcId="([^"]*)"').firstMatch(xml)?.group(1) ??
             '';
-    final defaultId = RegExp(r'<Other[^>]*defaultRcId="([^"]*)"')
-            .firstMatch(xml)
-            ?.group(1) ??
-        '';
     return EasyConnectResourceList(
       entries: entries,
       dnsServers: EasyConnectConfig.splitNonEmpty(dns, ';'),

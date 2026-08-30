@@ -64,8 +64,7 @@ class ATrustTcpTunnelConn {
     bool zeroRtt = false,
     Duration timeout = const Duration(seconds: 18),
   }) async {
-    final conn = ATrustTcpTunnelConn._(channel)
-      .._beginListen(zeroRtt: zeroRtt);
+    final conn = ATrustTcpTunnelConn._(channel).._beginListen(zeroRtt: zeroRtt);
     try {
       await channel.send(
         ATrustTcpTunnelProtocol.handshakeMessage(
@@ -319,4 +318,3 @@ class ATrustTcpTunnelStream extends SangforTcpStream {
   @override
   Future<void> close() => _connection.close();
 }
-

@@ -245,8 +245,8 @@ void main() {
     final connection = await proxy.dialTcp('10.0.0.9', _serverPort);
     await connection.send(Uint8List.fromList('retry me'.codeUnits));
 
-    final echoed = await connection.incoming.first
-        .timeout(const Duration(seconds: 5));
+    final echoed =
+        await connection.incoming.first.timeout(const Duration(seconds: 5));
     expect(utf8.decode(echoed), 'retry me');
     expect(peer.received.length, 1);
 
@@ -329,8 +329,8 @@ void main() {
       (_FakeTcpPeer.peerIss + 1) & 0xffffffff,
       Uint8List.fromList('late'.codeUnits),
     );
-    final late = await connection.incoming.first
-        .timeout(const Duration(seconds: 5));
+    final late =
+        await connection.incoming.first.timeout(const Duration(seconds: 5));
     expect(utf8.decode(late), 'late');
 
     await connection.close();
@@ -367,12 +367,36 @@ void main() {
       }
       final question = query.sublist(12, offset + 5);
       final answer = <int>[
-        0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c,
-        0x00, 0x04, 10, 1, 2, 3,
+        0xc0,
+        0x0c,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x3c,
+        0x00,
+        0x04,
+        10,
+        1,
+        2,
+        3,
       ];
       final reply = <int>[
-        (id >> 8) & 0xff, id & 0xff, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00,
+        (id >> 8) & 0xff,
+        id & 0xff,
+        0x81,
+        0x80,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
         ...question,
         ...answer,
       ];
@@ -412,8 +436,18 @@ void main() {
       final id = (query[0] << 8) | query[1];
       // NXDOMAIN with no answers.
       final reply = Uint8List.fromList(<int>[
-        (id >> 8) & 0xff, id & 0xff, 0x81, 0x83, 0x00, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
+        (id >> 8) & 0xff,
+        id & 0xff,
+        0x81,
+        0x83,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
         ...query.sublist(12),
       ]);
       final replyDatagram = buildUdpDatagram(
