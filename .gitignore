@@ -26,15 +26,12 @@ migrate_working_dir/
 # Flutter/Dart/Pub related
 # Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock.
 /pubspec.lock
+packages/*/pubspec.lock
 **/doc/api/
 .dart_tool/
 .flutter-plugins-dependencies
-/build/
-packages/*/build/
+build/
 /coverage/
 
 # Local Gradle user home (path without spaces; not part of the project).
 /.gradle-home/
-
-# Sub-packages are libraries; do not commit their lockfiles.
-packages/*/pubspec.lock

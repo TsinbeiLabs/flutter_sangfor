@@ -14,14 +14,19 @@ jobs:
           channel: stable
       - name: Resolve dependencies
         run: |
-          flutter pub get
+          (cd packages/flutter_sangfor && flutter pub get)
           (cd packages/flutter_sangfor_atrust && flutter pub get)
           (cd packages/flutter_sangfor_easy_connect && flutter pub get)
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed lib test packages
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          packages/flutter_sangfor/lib packages/flutter_sangfor/test
+          packages/flutter_sangfor_atrust packages/flutter_sangfor_easy_connect
       - name: Analyze root package
+        working-directory: packages/flutter_sangfor
         run: flutter analyze
       - name: Test root package
+        working-directory: packages/flutter_sangfor
         run: flutter test
       - name: Analyze aTrust package
         working-directory: packages/flutter_sangfor_atrust
@@ -45,7 +50,7 @@ jobs:
           channel: stable
       - name: Build Windows example
         run: flutter build windows --debug
-        working-directory: example
+        working-directory: packages/flutter_sangfor/example
         env:
           # GitHub runners ship CMake 4.x which rejects the old googletest
           # pinned by the Flutter windows runner template.
