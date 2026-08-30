@@ -137,8 +137,24 @@ jobs:
             echo "Connector publishes: ${SUBS:-none}"
           }
 
+      - name: Fetch OIDC token
+        id: oidc
+        run: |
+          set -e
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "ACTIONS_ID_TOKEN_REQUEST_URL not set — id-token: write missing?" >&2
+            exit 1
+          fi
+          TOKEN=$(curl -sH \
+            "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=pub.dev" | jq -r '.value')
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
       - name: Publish flutter_sangfor
         if: steps.releases.outputs.root == 'true'
+        env:
+          PUB_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -e
           (cd packages/flutter_sangfor && flutter pub get && dart pub publish --force)
@@ -163,6 +179,8 @@ jobs:
 
       - name: Publish connectors
         if: steps.releases.outputs.subs != ''
+        env:
+          PUB_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -e
           for pkg in ${{ steps.releases.outputs.subs }}; do
