@@ -82,7 +82,8 @@ jobs:
           fi
 
           version_of() {
-            sed -n 's/^version:[[:space:]]*//p' "packages/$1/pubspec.yaml" | head -n1 | tr -d '"'
+            sed -n 's/^version:[[:space:]]*//p' "packages/$1/pubspec.yaml" |
+              head -n1 | tr -d '"\r'
           }
 
           published() {
@@ -98,7 +99,9 @@ jobs:
               fi
               return 1
             fi
-            if [ "$(published "$1" "$2")" = "no" ]; then
+            # Dispatch mode: publish only when the version is not on pub.dev
+            # yet. Anything other than an explicit "yes" counts as absent.
+            if [ "$(published "$1" "$2")" != "yes" ]; then
               return 0
             fi
             return 1
