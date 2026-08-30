@@ -51,10 +51,6 @@ jobs:
       - name: Build Windows example
         run: flutter build windows --debug
         working-directory: packages/flutter_sangfor/example
-        env:
-          # GitHub runners ship CMake 4.x which rejects the old googletest
-          # pinned by the Flutter windows runner template.
-          CMAKE_POLICY_VERSION_MINIMUM: 3.5
 
   publish:
     name: publish (${{ matrix.package }})
