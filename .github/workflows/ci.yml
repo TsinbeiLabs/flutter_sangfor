@@ -24,6 +24,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
       - name: Point connectors at the local root package
         # Lockstep releases reference a root version that is not on pub.dev
         # yet; dependency_overrides bypasses version resolution so tests run
@@ -48,6 +49,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
       - name: Build Windows example
         run: flutter build windows --debug
         working-directory: packages/flutter_sangfor/example
