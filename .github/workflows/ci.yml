@@ -29,7 +29,8 @@ jobs:
         # yet; dependency_overrides bypasses version resolution so tests run
         # against the monorepo checkout.
         if: matrix.package != 'flutter_sangfor'
-        run: printf '\ndependency_overrides:\n  flutter_sangfor:\n    path: ../flutter_sangfor\n' >> pubspec.yaml
+        run: |
+          printf '\ndependency_overrides:\n  flutter_sangfor:\n    path: ../flutter_sangfor\n' >> pubspec.yaml
       - name: Resolve dependencies
         run: flutter pub get
       - name: Check formatting
