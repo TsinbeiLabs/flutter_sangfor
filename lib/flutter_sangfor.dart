@@ -2,6 +2,19 @@ import 'flutter_sangfor_platform_interface.dart';
 import 'src/models.dart';
 
 export 'src/models.dart';
+export 'src/protocol.dart';
+export 'src/client.dart';
+export 'src/errors.dart';
+export 'src/events.dart';
+export 'src/tunnel_io.dart';
+export 'src/socket_tcp_stream.dart';
+export 'src/socks5.dart';
+export 'src/wintun.dart';
+export 'src/tun_device.dart';
+export 'src/fd_packet_device.dart';
+export 'src/utun_device.dart';
+export 'src/android_vpn.dart';
+export 'src/ios_vpn.dart';
 
 /// Controls an aTrust-compatible VPN session.
 class FlutterSangfor {
@@ -29,4 +42,8 @@ class FlutterSangfor {
   /// Returns the current session state.
   Future<SangforConnectionState> getState() =>
       FlutterSangforPlatform.instance.getState();
+
+  /// Returns capabilities reported by the native platform adapter.
+  Future<SangforPlatformCapabilities> getCapabilities() =>
+      FlutterSangforPlatform.instance.getCapabilities();
 }

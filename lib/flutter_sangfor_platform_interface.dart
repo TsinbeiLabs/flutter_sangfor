@@ -38,4 +38,7 @@ abstract class FlutterSangforPlatform extends PlatformInterface {
 
   Future<SangforConnectionState> getState() =>
       throw UnimplementedError('getState() has not been implemented.');
+
+  Future<SangforPlatformCapabilities> getCapabilities() =>
+      throw UnimplementedError('getCapabilities() has not been implemented.');
 }

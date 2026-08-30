@@ -4,16 +4,17 @@
 #include <windows.h>
 
 // For getPlatformVersion; remove unless needed for your plugin implementation.
-#include <VersionHelpers.h>
-
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
 #include <memory>
-#include <sstream>
 
 namespace flutter_sangfor {
+
+namespace {
+std::string state = "disconnected";
+}
 
 // static
 void FlutterSangforPlugin::RegisterWithRegistrar(
@@ -40,17 +41,21 @@ FlutterSangforPlugin::~FlutterSangforPlugin() {}
 void FlutterSangforPlugin::HandleMethodCall(
     const flutter::MethodCall<flutter::EncodableValue> &method_call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  if (method_call.method_name().compare("getPlatformVersion") == 0) {
-    std::ostringstream version_stream;
-    version_stream << "Windows ";
-    if (IsWindows10OrGreater()) {
-      version_stream << "10+";
-    } else if (IsWindows8OrGreater()) {
-      version_stream << "8";
-    } else if (IsWindows7OrGreater()) {
-      version_stream << "7";
-    }
-    result->Success(flutter::EncodableValue(version_stream.str()));
+  if (method_call.method_name().compare("getState") == 0) {
+    result->Success(flutter::EncodableValue(state));
+  } else if (method_call.method_name().compare("getCapabilities") == 0) {
+    flutter::EncodableMap capabilities;
+    capabilities[flutter::EncodableValue("platform")] = flutter::EncodableValue("windows");
+    capabilities[flutter::EncodableValue("supportsVpn")] = flutter::EncodableValue(false);
+    capabilities[flutter::EncodableValue("supportsTun")] = flutter::EncodableValue(false);
+    capabilities[flutter::EncodableValue("supportsSocks5")] = flutter::EncodableValue(false);
+    capabilities[flutter::EncodableValue("supportedAuthTypes")] = flutter::EncodableValue(flutter::EncodableList());
+    result->Success(flutter::EncodableValue(capabilities));
+  } else if (method_call.method_name().compare("disconnect") == 0) {
+    state = "disconnected";
+    result->Success();
+  } else if (method_call.method_name().compare("connect") == 0) {
+    result->Error("unsupported", "The aTrust transport is not implemented on Windows yet.");
   } else {
     result->NotImplemented();
   }

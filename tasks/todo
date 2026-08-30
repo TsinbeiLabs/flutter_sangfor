@@ -1,0 +1,95 @@
+# flutter_sangfor development tasks
+
+## 1. Control-plane completion
+
+- [x] 1a Unify errors, timeouts, cancellation, and connection events.
+- [x] 1b Connect the aTrust login session to the root `connect` API.
+- [x] 1c Complete authenticated-session recovery and expiry handling.
+- [x] 1d Establish redacted protocol-fixture conventions and regression tests.
+
+## 2. aTrust data plane (tunnel driver, pure Dart)
+
+- [ ] 2a Validate the real tunnel handshake and frame protocol in an authorized environment.
+- [x] 2b Implement the tunnel transport lifecycle state machine.
+- [x] 2c Implement heartbeats, bounded backpressure, reconnect, and shutdown.
+- [x] 2d Implement TCP/L3 user-space tunnel I/O protocol (frames, conntrack, VIP, auth).
+- [x] 2e Implement the streaming L3 frame decoder (socket chunks -> frames).
+- [x] 2f Implement `ATrustL3TunnelConnection` runtime: authTunnel handshake, read loop,
+      per-flow auth dispatch with 5s deadline / 3 attempts / 0x84+0x85-0x87 retry statuses,
+      heartbeat miss detection, VIP updates, write serialization.
+- [x] 2g Implement best-node selection (3x TCP probe, avg + failure*timeout score, WAN then LAN fallback).
+- [x] 2h Implement Query-IP acquisition of the client virtual IP over a short TLS connection.
+- [x] 2i Implement `ATrustTunnel` manager: per-node-group connections, reconnect,
+      merged incoming packet stream, route matching (CIDR/range/单IP, tcp-pref-L3 rule).
+- [x] 2j Implement `ATrustTcpTunnelClient` Dial (SOCKS5-like per-connection proxy, raw + reuse modes).
+- [x] 2k Wire `ATrustConnector`: login -> nodes -> IP -> tunnel -> `connected` session
+      with virtualAddress + dnsServers; injectable socket factory for tests.
+- [x] 2l Tests: streaming decoder, full connection lifecycle against scripted fake sockets,
+      node selection, route matching, TCP dial client, connector wiring.
+
+## 3. EasyConnect data plane (minimal TLS client + tunnel)
+
+- [ ] 3a-verify Validate the minimal TLS stack against a real EasyConnect server and a real TLS stack (self-consistent with an in-test server today).
+- [x] 3a Implement minimal TLS 1.1/1.2 client per RFC 4346/5246: custom ClientHello
+      (session id, TLS 1.1 legacy version, RC4-SHA + AES128-SHA + renegotiation SCSV,
+      fake heartbeat extension), RSA key exchange, both PRFs, record MAC/encryption.
+- [x] 3b Implement minimal X.509 DER parsing to extract the server RSA public key.
+- [x] 3c Expose the negotiated ServerHello session id (token derivation input).
+- [x] 3d Implement `EasyConnectTunnel`: token connection (normal hello) -> token
+      derivation -> Query-IP (keep-open command stream, op 3 heartbeat every 30s) ->
+      RX stream (op 6) + TX stream (op 5, ICMP heartbeat every 12s) -> raw IP packet
+      stream; fatal control codes 8/9/14; update_session.csp every 60s.
+- [x] 3e Wire `EasyConnectConnector`: login -> conf -> tunnel -> `connected` session
+      with virtualAddress; injectable TLS client factory for tests.
+- [x] 3f Tests: PRF/record/handshake fixtures, handshake against an in-test TLS server
+      (static RSA cert fixture), tunnel lifecycle against scripted fake sockets.
+
+## 4. Platform VPN adapters
+
+- [x] 4a Implement the Windows data plane: `WintunDevice` (Wintun FFI, read isolate
+      with read-wait event, send via ring allocation, netsh address/route/DNS helpers).
+      License verified: only official signed `wintun.dll` from wintun.net may be
+      distributed (permissive license inside the ZIP; do not rebuild/rename).
+      Manual integration pending (needs admin + DLL present).
+- [x] 4a-linux Implement `TunDevice` (Linux `/dev/net/tun` FFI, TUNSETIFF ioctl,
+      non-blocking poll read loop on a dedicated isolate). Manual integration pending.
+- [x] 4e Implement the userspace entry points: `SangforSocks5Server` (RFC 1928
+      no-auth CONNECT) over `SangforTcpStream` dialers, `EasyConnectTcpProxy`
+      (TCP-over-L3 synthesis with retransmit/zero-window/ooo handling, UDP flows,
+      tunnel DNS resolver), `SangforTunnelRouter` (device <-> tunnel pump),
+      connector-level `dialTcp`.
+- [ ] 4a-verify Run Wintun/Linux TUN against real interfaces (needs elevation).
+- [x] 4b Implement Android `VpnService` integration: `VpnTunnelService`
+      (foreground service, Builder/establish, detachFd to Dart, self-excluded
+      via addDisallowedApplication, Android 14 specialUse foreground type) and
+      `AndroidVpnDevice` (MethodChannel prepare/start/stop + FdPacketDevice FFI).
+      Verified by a debug APK build; on-device runtime test pending.
+- [x] 4c Implement iOS `NetworkExtension` integration:
+      `SangforPacketTunnelProvider` (Swift, NEPacketTunnelProvider with
+      packetFlow <-> loopback TCP IPC on port 6400, 4-byte length framing)
+      and `IosVpnDevice` (Dart, NETunnelProviderManager start/stop via
+      method channel + loopback socket packet device). Code compiles
+      untested: requires a Mac with Xcode to build the NE target.
+- [x] 4d Implement the macOS utun adapter: `UtunDevice` (AF_SYS_CONTROL
+      socket, CTLIOCGID ioctl, sockaddr_ctl connect, 4-byte protocol-family
+      header strip/prepend in FdPacketDevice). Code untested: requires
+      macOS + root to verify against a real utun interface.
+
+## 5. Hardening and release
+
+- [x] 5a Cancellation propagation: `SangforTunnelRouter` and
+      `SangforSocks5Server` accept `SangforCancellationToken`; cancelling
+      stops the router and tears down all proxy sessions including
+      in-flight dials (covered by tests).
+- [x] 5b Establish CI analysis, test, and platform-build matrix.
+- [x] 5c Release audit: CHANGELOG for all three packages, MIT LICENSE
+      copied to sub-packages, README covers SOCKS5/TUN/cancellation and
+      the example SOCKS5 demo.
+
+## Working rules
+
+- Protocol behavior must be verified against authorized deployments before being labeled compatible.
+- Never store or log passwords, cookies, SIDs, tokens, or challenge codes.
+- Keep aTrust and Easy Connect protocol implementations independent.
+- Mark a task complete only after implementation and focused verification pass.
+- Blocked items must be resolved by consulting references (RFCs, upstream code), not guessed.

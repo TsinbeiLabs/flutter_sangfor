@@ -31,3 +31,9 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Local Gradle user home (path without spaces; not part of the project).
+/.gradle-home/
+
+# Sub-packages are libraries; do not commit their lockfiles.
+packages/*/pubspec.lock

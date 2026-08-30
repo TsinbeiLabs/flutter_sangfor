@@ -18,6 +18,7 @@ class MethodChannelFlutterSangfor extends FlutterSangforPlatform {
     String? loginDomain,
     SangforAuthType authType = SangforAuthType.password,
   }) async {
+    _validateConnectionArguments(server, username, password, loginDomain);
     final result = await methodChannel.invokeMapMethod<String, Object?>(
       'connect',
       <String, Object?>{
@@ -38,5 +39,42 @@ class MethodChannelFlutterSangfor extends FlutterSangforPlatform {
   Future<SangforConnectionState> getState() async {
     final value = await methodChannel.invokeMethod<String>('getState');
     return SangforConnectionState.fromValue(value);
+  }
+
+  @override
+  Future<SangforPlatformCapabilities> getCapabilities() async {
+    final result = await methodChannel.invokeMapMethod<String, Object?>(
+      'getCapabilities',
+    );
+    return SangforPlatformCapabilities.fromMap(result ?? const {});
+  }
+
+  void _validateConnectionArguments(
+    Uri server,
+    String username,
+    String password,
+    String? loginDomain,
+  ) {
+    if ((server.scheme != 'https' && server.scheme != 'http') ||
+        server.host.isEmpty) {
+      throw ArgumentError.value(
+        server,
+        'server',
+        'must be an HTTP(S) URI with a host',
+      );
+    }
+    if (username.trim().isEmpty) {
+      throw ArgumentError.value(username, 'username', 'must not be empty');
+    }
+    if (password.isEmpty) {
+      throw ArgumentError.value(password, 'password', 'must not be empty');
+    }
+    if (loginDomain != null && loginDomain.trim().isEmpty) {
+      throw ArgumentError.value(
+        loginDomain,
+        'loginDomain',
+        'must be null or non-empty',
+      );
+    }
   }
 }

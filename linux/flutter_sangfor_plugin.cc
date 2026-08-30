@@ -16,6 +16,8 @@ struct _FlutterSangforPlugin {
   GObject parent_instance;
 };
 
+static const gchar* connection_state = "disconnected";
+
 G_DEFINE_TYPE(FlutterSangforPlugin, flutter_sangfor_plugin, g_object_get_type())
 
 // Called when a method call is received from Flutter.
@@ -26,8 +28,22 @@ static void flutter_sangfor_plugin_handle_method_call(
 
   const gchar* method = fl_method_call_get_name(method_call);
 
-  if (strcmp(method, "getPlatformVersion") == 0) {
-    response = get_platform_version();
+  if (strcmp(method, "getState") == 0) {
+    g_autoptr(FlValue) value = fl_value_new_string(connection_state);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (strcmp(method, "getCapabilities") == 0) {
+    g_autoptr(FlValue) capabilities = fl_value_new_map();
+    fl_value_set_string_take(capabilities, "platform", fl_value_new_string("linux"));
+    fl_value_set_string_take(capabilities, "supportsVpn", fl_value_new_bool(FALSE));
+    fl_value_set_string_take(capabilities, "supportsTun", fl_value_new_bool(FALSE));
+    fl_value_set_string_take(capabilities, "supportsSocks5", fl_value_new_bool(FALSE));
+    fl_value_set_string_take(capabilities, "supportedAuthTypes", fl_value_new_list());
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(capabilities));
+  } else if (strcmp(method, "disconnect") == 0) {
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  } else if (strcmp(method, "connect") == 0) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "unsupported", "The aTrust transport is not implemented on Linux yet.", nullptr));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
