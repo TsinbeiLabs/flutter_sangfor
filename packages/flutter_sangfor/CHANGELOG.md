@@ -1,3 +1,8 @@
+## 0.0.2
+
+* Add library-level dartdoc for the public API surface.
+* Update the package description to cover aTrust and Easy Connect.
+
 ## 0.0.1
 
 * Wire `getState` and `disconnect` across all declared platforms.

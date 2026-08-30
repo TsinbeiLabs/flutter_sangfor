@@ -1,3 +1,8 @@
+## 0.0.2
+
+* Bump the pointycastle dependency to ^4.0.0.
+* Add an example covering the connector and `dialTcp`.
+
 ## 0.0.1
 
 * Add the EasyConnect connector: login, conf parsing, a minimal TLS 1.1/1.2

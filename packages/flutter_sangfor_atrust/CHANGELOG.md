@@ -1,3 +1,9 @@
+## 0.0.2
+
+* Bump the pointycastle dependency to ^4.0.0.
+* Document the packet, conntrack, and anti-MITM APIs.
+* Add an example covering the connector and `dialTcp`.
+
 ## 0.0.1
 
 * Add the aTrust connector: manifest and authentication-method discovery,
