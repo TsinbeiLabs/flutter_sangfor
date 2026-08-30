@@ -3,45 +3,38 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  dart:
+  packages:
+    name: analyze and test (${{ matrix.package }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - flutter_sangfor
+          - flutter_sangfor_atrust
+          - flutter_sangfor_easy_connect
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
       - name: Resolve dependencies
-        run: |
-          (cd packages/flutter_sangfor && flutter pub get)
-          (cd packages/flutter_sangfor_atrust && flutter pub get)
-          (cd packages/flutter_sangfor_easy_connect && flutter pub get)
+        run: flutter pub get
       - name: Check formatting
-        run: >-
-          dart format --output=none --set-exit-if-changed
-          packages/flutter_sangfor/lib packages/flutter_sangfor/test
-          packages/flutter_sangfor_atrust packages/flutter_sangfor_easy_connect
-      - name: Analyze root package
-        working-directory: packages/flutter_sangfor
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze
         run: flutter analyze
-      - name: Test root package
-        working-directory: packages/flutter_sangfor
-        run: flutter test
-      - name: Analyze aTrust package
-        working-directory: packages/flutter_sangfor_atrust
-        run: flutter analyze
-      - name: Test aTrust package
-        working-directory: packages/flutter_sangfor_atrust
-        run: flutter test
-      - name: Analyze Easy Connect package
-        working-directory: packages/flutter_sangfor_easy_connect
-        run: flutter analyze
-      - name: Test Easy Connect package
-        working-directory: packages/flutter_sangfor_easy_connect
+      - name: Test
         run: flutter test
 
   windows:
+    name: build windows example
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,3 +48,114 @@ jobs:
           # GitHub runners ship CMake 4.x which rejects the old googletest
           # pinned by the Flutter windows runner template.
           CMAKE_POLICY_VERSION_MINIMUM: 3.5
+
+  publish:
+    name: publish to pub.dev
+    # Tag pushes (vX.Y.Z) publish every package whose pubspec version matches
+    # the tag. workflow_dispatch publishes every package whose pubspec version
+    # is not on pub.dev yet. In both modes the root package goes first and the
+    # job waits for it to become resolvable before publishing the connectors.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
+    needs: [packages, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Determine releases
+        id: releases
+        run: |
+          set -e
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TARGET="${GITHUB_REF_NAME#v}"
+            echo "Releasing tag $GITHUB_REF_NAME (version $TARGET)."
+          else
+            TARGET=""
+            echo "Manual dispatch: releasing every version not yet on pub.dev."
+          fi
+
+          version_of() {
+            sed -n 's/^version:[[:space:]]*//p' "packages/$1/pubspec.yaml" | head -n1 | tr -d '"'
+          }
+
+          published() {
+            curl -sf "https://pub.dev/api/packages/$1" |
+              jq -r --arg v "$2" 'if any(.versions[]; . == $v) then "yes" else "no" fi'
+          }
+
+          wanted() {
+            # $1 = package, $2 = its pubspec version
+            if [ -n "$TARGET" ]; then
+              if [ "$2" = "$TARGET" ]; then
+                return 0
+              fi
+              return 1
+            fi
+            if [ "$(published "$1" "$2")" = "no" ]; then
+              return 0
+            fi
+            return 1
+          }
+
+          ROOT_VERSION="$(version_of flutter_sangfor)"
+          if wanted flutter_sangfor "$ROOT_VERSION"; then
+            echo "root=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "root=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          SUBS=""
+          for pkg in flutter_sangfor_atrust flutter_sangfor_easy_connect; do
+            version="$(version_of "$pkg")"
+            if wanted "$pkg" "$version"; then
+              SUBS="$SUBS $pkg"
+            fi
+          done
+          echo "subs=${SUBS# }" >> "$GITHUB_OUTPUT"
+          echo "root_version=$ROOT_VERSION" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "Target: ${TARGET:-manual}"
+            echo "Root publish: $(wanted flutter_sangfor "$ROOT_VERSION" && echo yes || echo no)"
+            echo "Connector publishes: ${SUBS:-none}"
+          }
+
+      - name: Publish flutter_sangfor
+        if: steps.releases.outputs.root == 'true'
+        run: |
+          set -e
+          (cd packages/flutter_sangfor && flutter pub get && dart pub publish --force)
+
+      - name: Wait for flutter_sangfor to become resolvable
+        if: steps.releases.outputs.subs != ''
+        run: |
+          set -e
+          TARGET_VERSION="${{ steps.releases.outputs.root_version }}"
+          echo "Waiting for flutter_sangfor $TARGET_VERSION on pub.dev..."
+          for i in $(seq 1 90); do
+            LIVE=$(curl -sf https://pub.dev/api/packages/flutter_sangfor |
+              jq -r --arg v "$TARGET_VERSION" 'if any(.versions[]; . == $v) then "yes" else "no" fi')
+            if [ "$LIVE" = "yes" ]; then
+              echo "Available after $((i * 10))s."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "flutter_sangfor $TARGET_VERSION never became resolvable." >&2
+          exit 1
+
+      - name: Publish connectors
+        if: steps.releases.outputs.subs != ''
+        run: |
+          set -e
+          for pkg in ${{ steps.releases.outputs.subs }}; do
+            echo "Publishing $pkg..."
+            (cd "packages/$pkg" && flutter pub get && dart pub publish --force)
+          done
