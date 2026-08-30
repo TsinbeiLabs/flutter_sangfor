@@ -50,3 +50,20 @@ not yet on pub.dev.
 
 MIT. This project does not grant rights to Sangfor trademarks, proprietary
 SDKs, binaries, or service-side intellectual property.
+
+## Acknowledgments
+
+This project is an independent clean-room reimplementation of publicly
+observed wire behavior; no source code is copied from the following
+projects, which were used as behavior references:
+
+- [Mythologyli/zju-connect](https://github.com/Mythologyli/zju-connect) (AGPL-3.0)
+  — aTrust L3 tunnel, per-flow auth, conntrack, TCP tunnel.
+- [GayStudio/EasierConnect](https://github.com/GayStudio/EasierConnect)
+  — EasyConnect XML control plane reference.
+- [lyc8503/NJUConnect](https://github.com/lyc8503/NJUConnect)
+  — EasyConnect control plane reference.
+- [Yan233th/SHIEP-Pipeline](https://github.com/Yan233th/SHIEP-Pipeline) (AGPL-3.0, Rust)
+  — EasyConnect token, Query-IP, RX/TX stream, heartbeat.
+- [WireGuard/wintun](https://www.wintun.net/)
+  — Windows TUN adapter (official signed DLL loaded at runtime).

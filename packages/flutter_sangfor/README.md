@@ -62,11 +62,12 @@ SOCKS5-style per-connection tunneling. The TLS policy verifies against the
 platform trust store by default and falls back to anti-MITM certificate
 pinning when the platform validation fails.
 
-The aTrust L3 wire protocol is additionally ported from the public
-zju-connect reference and unit-tested at the byte level: the initial tunnel
-auth handshake (`0x05 0xD0` / `0x53` envelope) with VIP parsing, per-flow
-authenticated data frames with `xRequestSig` HMAC signing, the conntrack TCP
-state machine with protocol-specific TTLs, raw IPv4/TCP/UDP packet parsing,
+The aTrust L3 wire protocol is additionally implemented from behavior
+observed in the public zju-connect reference and unit-tested at the
+byte level: the initial tunnel auth handshake (`0x05 0xD0` / `0x53`
+envelope) with VIP parsing, per-flow authenticated data frames with
+`xRequestSig` HMAC signing, the conntrack TCP state machine with
+protocol-specific TTLs, raw IPv4/TCP/UDP packet parsing,
 stream splitting for inbound IP packets, and the SOCKS5-like TCP tunnel with
 its handshake, connect replies, data frames, and EOF signaling. Anti-MITM
 verification now also pins the server certificate via
@@ -150,3 +151,20 @@ packages depend on the root package and never depend on each other.
 The original Flutter integration is MIT licensed. This project does not grant
 rights to Sangfor/Atrust trademarks, proprietary SDKs, binaries, or
 service-side intellectual property.
+
+## Acknowledgments
+
+This project is an independent clean-room reimplementation of publicly
+observed wire behavior; no source code is copied from the following
+projects, which were used as behavior references:
+
+- [Mythologyli/zju-connect](https://github.com/Mythologyli/zju-connect) (AGPL-3.0)
+  — aTrust L3 tunnel, per-flow auth, conntrack, TCP tunnel.
+- [GayStudio/EasierConnect](https://github.com/GayStudio/EasierConnect)
+  — EasyConnect XML control plane reference.
+- [lyc8503/NJUConnect](https://github.com/lyc8503/NJUConnect)
+  — EasyConnect control plane reference.
+- [Yan233th/SHIEP-Pipeline](https://github.com/Yan233th/SHIEP-Pipeline) (AGPL-3.0, Rust)
+  — EasyConnect token, Query-IP, RX/TX stream, heartbeat.
+- [WireGuard/wintun](https://www.wintun.net/)
+  — Windows TUN adapter (official signed DLL loaded at runtime).
