@@ -548,6 +548,9 @@ void main() {
         channels.add(channel);
         return channel;
       },
+      // Real DNS cannot resolve the fixture domain; probe it in-process so
+      // the test does not depend on the host resolver.
+      nodeDialer: (host, port, timeout) async => const Duration(milliseconds: 1),
     );
     final session = await connector.connect(
       SangforConnectOptions(
