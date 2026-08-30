@@ -57,133 +57,21 @@ jobs:
           CMAKE_POLICY_VERSION_MINIMUM: 3.5
 
   publish:
-    name: publish to pub.dev
-    # Tag pushes (vX.Y.Z) publish every package whose pubspec version matches
-    # the tag. workflow_dispatch publishes every package whose pubspec version
-    # is not on pub.dev yet. In both modes the root package goes first and the
-    # job waits for it to become resolvable before publishing the connectors.
+    name: publish (${{ matrix.package }})
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
     needs: [packages, windows]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - flutter_sangfor
+          - flutter_sangfor_atrust
+          - flutter_sangfor_easy_connect
     permissions:
       id-token: write
       contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Determine releases
-        id: releases
-        run: |
-          set -e
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TARGET="${GITHUB_REF_NAME#v}"
-            echo "Releasing tag $GITHUB_REF_NAME (version $TARGET)."
-          else
-            TARGET=""
-            echo "Manual dispatch: releasing every version not yet on pub.dev."
-          fi
-
-          version_of() {
-            sed -n 's/^version:[[:space:]]*//p' "packages/$1/pubspec.yaml" |
-              head -n1 | tr -d '"\r'
-          }
-
-          published() {
-            curl -sf "https://pub.dev/api/packages/$1" |
-              jq -r --arg v "$2" 'if any(.versions[]; . == $v) then "yes" else "no" fi'
-          }
-
-          wanted() {
-            # $1 = package, $2 = its pubspec version
-            if [ -n "$TARGET" ]; then
-              if [ "$2" = "$TARGET" ]; then
-                return 0
-              fi
-              return 1
-            fi
-            # Dispatch mode: publish only when the version is not on pub.dev
-            # yet. Anything other than an explicit "yes" counts as absent.
-            if [ "$(published "$1" "$2")" != "yes" ]; then
-              return 0
-            fi
-            return 1
-          }
-
-          ROOT_VERSION="$(version_of flutter_sangfor)"
-          if wanted flutter_sangfor "$ROOT_VERSION"; then
-            echo "root=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "root=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          SUBS=""
-          for pkg in flutter_sangfor_atrust flutter_sangfor_easy_connect; do
-            version="$(version_of "$pkg")"
-            if wanted "$pkg" "$version"; then
-              SUBS="$SUBS $pkg"
-            fi
-          done
-          echo "subs=${SUBS# }" >> "$GITHUB_OUTPUT"
-          echo "root_version=$ROOT_VERSION" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "Target: ${TARGET:-manual}"
-            echo "Root publish: $(wanted flutter_sangfor "$ROOT_VERSION" && echo yes || echo no)"
-            echo "Connector publishes: ${SUBS:-none}"
-          }
-
-      - name: Fetch OIDC token
-        id: oidc
-        run: |
-          set -e
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
-            echo "ACTIONS_ID_TOKEN_REQUEST_URL not set — id-token: write missing?" >&2
-            exit 1
-          fi
-          TOKEN=$(curl -sH \
-            "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=pub.dev" | jq -r '.value')
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-
-      - name: Publish flutter_sangfor
-        if: steps.releases.outputs.root == 'true'
-        env:
-          PUB_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-        run: |
-          set -e
-          (cd packages/flutter_sangfor && flutter pub get && dart pub publish --force)
-
-      - name: Wait for flutter_sangfor to become resolvable
-        if: steps.releases.outputs.subs != ''
-        run: |
-          set -e
-          TARGET_VERSION="${{ steps.releases.outputs.root_version }}"
-          echo "Waiting for flutter_sangfor $TARGET_VERSION on pub.dev..."
-          for i in $(seq 1 90); do
-            LIVE=$(curl -sf https://pub.dev/api/packages/flutter_sangfor |
-              jq -r --arg v "$TARGET_VERSION" 'if any(.versions[]; . == $v) then "yes" else "no" fi')
-            if [ "$LIVE" = "yes" ]; then
-              echo "Available after $((i * 10))s."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "flutter_sangfor $TARGET_VERSION never became resolvable." >&2
-          exit 1
-
-      - name: Publish connectors
-        if: steps.releases.outputs.subs != ''
-        env:
-          PUB_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-        run: |
-          set -e
-          for pkg in ${{ steps.releases.outputs.subs }}; do
-            echo "Publishing $pkg..."
-            (cd "packages/$pkg" && flutter pub get && dart pub publish --force)
-          done
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/${{ matrix.package }}
