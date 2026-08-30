@@ -31,9 +31,10 @@ authorized deployment.
 
 ## Current conclusion
 
-The aTrust L3 and TCP tunnel wire formats are ported from the public
-`Mythologyli/zju-connect` reference (AGPL-3.0, reference-only) and covered by
-unit tests that assert byte-level framing. The EasyConnect data plane
+The aTrust L3 and TCP tunnel wire formats are implemented from behavior
+observed in the public `Mythologyli/zju-connect` reference (AGPL-3.0,
+reference-only) and covered by unit tests that assert byte-level framing.
+The EasyConnect data plane
 (token derivation, Query-IP, RX/TX stream handshake, heartbeat, control
 frames) follows the public EasierConnect/NJUConnect/SHIEP-Pipeline
 references. Both remain labeled `synthetic` until validated against an
@@ -61,7 +62,7 @@ The public reference repository is `Mythologyli/zju-connect`, with aTrust
 code under `client/atrust`. It is licensed AGPL-3.0 and is reference-only
 for this project; no source code is copied here.
 
-Key ported behaviors:
+Key implemented behaviors:
 
 - L3 tunnel initial handshake: `0x05 0xD0` method response, `0x53` auth
   envelope with SID JSON, VIP header (`0x05 status reserved addrType`), and
@@ -122,12 +123,6 @@ These observations map to `flutter_sangfor_easy_connect` as a separate XML
 control plane, token/session model, dual-channel transport, resource parser,
 keepalive, and platform packet adapter. They must not be mixed into the
 aTrust JSON implementation.
-
-The reference data channels require a TLS client hello with the session id
-`L3IP` plus 28 zero bytes, TLS 1.1, and an RC4-SHA cipher suite. Dart's
-`SecureSocket` cannot emit that hello shape; establishing the real data
-channel needs a platform TLS shim and remains future work. The protocol
-message builders and parsers are already unit-testable without it.
 
 The references contain configurations that disable certificate verification
 for reverse-engineering compatibility. This project must not copy that

@@ -40,7 +40,7 @@ part of this project.
 - [x] aTrust Dart authentication connector
 - [x] Tunnel lifecycle, heartbeat, reconnect, and bounded queue primitives
 - [x] Abstract packet-to-tunnel I/O bridge
-- [x] aTrust L3 tunnel handshake, VIP, and data-frame protocol (zju-connect reference port)
+- [x] aTrust L3 tunnel handshake, VIP, and data-frame protocol (zju-connect reference implementation)
 - [x] aTrust conntrack TCP state machine with protocol TTLs
 - [x] aTrust IPv4/TCP/UDP packet parsing and inbound stream splitting
 - [x] aTrust SOCKS5-like TCP tunnel protocol with signed auth and data framing
@@ -64,5 +64,5 @@ part of this project.
 - [ ] Minimal-TLS interop with a real EasyConnect server and third-party TLS stacks
 - [ ] Verified Wintun/Linux TUN adapters against real interfaces (needs elevation)
 - [ ] Android on-device VPN runtime test (APK build verified)
-- [ ] iOS `NetworkExtension` adapter
-- [ ] macOS utun adapter
+- [x] iOS `NetworkExtension` adapter (compiled; needs a Mac to runtime-test)
+- [x] macOS utun adapter (compiled; needs macOS to runtime-test)

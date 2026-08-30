@@ -1,3 +1,7 @@
+/// aTrust protocol core: login, L3 tunnel, TCP tunnel, and anti-MITM
+/// verification for the `flutter_sangfor` package family.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';

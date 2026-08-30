@@ -1,7 +1,7 @@
 # flutter_sangfor
 
 A Flutter package family for Sangfor remote-access VPNs (aTrust and Easy
-Connect) with an independently ported protocol core. No vendor SDK binaries.
+Connect) with an independently implemented protocol core. No vendor SDK binaries.
 
 ## Packages
 

@@ -4,7 +4,11 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:pointycastle/export.dart';
 
+/// Anti-MITM verification data advertised by an aTrust server, used to
+/// verify the server challenge, response signatures, and TLS certificate
+/// identity.
 class ATrustAntiMitmData {
+  /// Creates the verification data from its raw fields.
   const ATrustAntiMitmData({
     required this.enable,
     required this.devicePublicKeyModulus,
@@ -18,6 +22,7 @@ class ATrustAntiMitmData {
     this.antiMitmRequest = false,
   });
 
+  /// Parses the verification data from a decoded `antiMITMAttackData` map.
   factory ATrustAntiMitmData.fromMap(Map<String, Object?> map) =>
       ATrustAntiMitmData(
         enable: _int(map['enable']),
@@ -32,17 +37,40 @@ class ATrustAntiMitmData {
         antiMitmRequest: map['antiMITMRequest'] as bool? ?? false,
       );
 
+  /// Whether anti-MITM verification is enabled (1) on this server.
   final int enable;
+
+  /// The server-advertised device public key modulus (hex).
   final String devicePublicKeyModulus;
+
+  /// The server-advertised device public key exponent (decimal).
   final String devicePublicKeyExponent;
+
+  /// The challenge plaintext the server expects to be encrypted.
   final String challenge;
+
+  /// The server-computed AES-CBC encryption of the challenge to compare
+  /// against.
   final String encryptedChallenge;
+
+  /// The server's HMAC-SHA256 signature over the auth-config response.
   final String mitmSignature;
+
+  /// The base64 RSA certificate digest to pin, when advertised.
   final String? rsaCertificate;
+
+  /// The base64 SM2 encryption certificate digest to pin, when advertised.
   final String? sm2EncryptionCertificate;
+
+  /// The anti-MITM continuation ticket, when advertised.
   final String? ticket;
+
+  /// Whether the server requests an explicit anti-MITM confirmation.
   final bool antiMitmRequest;
 
+  /// Verifies the AES-CBC challenge: derives the key/IV from the device
+  /// public key, encrypts the challenge, and compares against the
+  /// server-provided ciphertext. Throws [FormatException] on mismatch.
   void verifyChallenge() {
     _requireEnabled();
     final material = sha256
@@ -70,6 +98,8 @@ class ATrustAntiMitmData {
     }
   }
 
+  /// Verifies the HMAC-SHA256 signature over the flattened auth-config
+  /// response. Throws [FormatException] on mismatch.
   void verifyResponseSignature(Map<String, Object?> rawResponse) {
     _requireEnabled();
     if (mitmSignature.isEmpty) {
@@ -101,6 +131,8 @@ class ATrustAntiMitmData {
     }
   }
 
+  /// Verifies that at least one peer TLS certificate matches the advertised
+  /// certificate identity digests. Throws [FormatException] on mismatch.
   void verifyCertificateIdentity(Iterable<List<int>> peerCertificates) {
     _requireEnabled();
     final encodedCertificates = <String>[

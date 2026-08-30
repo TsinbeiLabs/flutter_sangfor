@@ -1,3 +1,8 @@
+/// Flutter integration for Sangfor remote-access VPNs: common lifecycle,
+/// userspace data plane (SOCKS5 frontend, TUN adapters), and the connector
+/// contract implemented by the product packages.
+library;
+
 import 'flutter_sangfor_platform_interface.dart';
 import 'src/models.dart';
 

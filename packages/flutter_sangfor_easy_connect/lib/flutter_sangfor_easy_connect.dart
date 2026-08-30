@@ -1,3 +1,8 @@
+/// Easy Connect protocol core: XML login, minimal TLS 1.1/1.2 data channel,
+/// L3 tunnel, and TCP-over-L3 synthesis for the `flutter_sangfor` package
+/// family.
+library;
+
 import 'dart:typed_data';
 
 import 'package:flutter_sangfor/flutter_sangfor.dart';

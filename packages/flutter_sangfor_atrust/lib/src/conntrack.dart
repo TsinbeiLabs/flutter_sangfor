@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'packet.dart';
 
+/// TCP conntrack states used by the L3 per-flow connection tracking.
 enum ATrustTcpConntrackState {
   reset,
   inboundSyn,
@@ -25,11 +26,15 @@ const Duration _udpConntrackTTL = Duration(seconds: 120);
 const Duration _icmpConntrackTTL = Duration(seconds: 30);
 const Duration _defaultConntrackTTL = Duration(seconds: 60);
 
+/// Per-flow TCP state machine for aTrust L3 conntrack, tracking the TCP
+/// handshake and teardown transitions and their TTLs.
 class ATrustTcpConntrack {
   ATrustTcpConntrackState state = ATrustTcpConntrackState.reset;
   int? sequenceNumber;
   Duration ttl = _defaultConntrackTTL;
 
+  /// Updates the state machine with a parsed TCP segment.
+  /// [incoming] is true for server-to-client packets.
   void observeTcp(ATrustTCPPacket packet, bool incoming) {
     final flags = packet.flags;
     if ((flags & tcpRstFlag) != 0) {
@@ -111,6 +116,8 @@ class ATrustTcpConntrack {
   }
 }
 
+/// Computes the TTL for a protocol-specific flow based on the TCP state
+/// machine (if TCP) or the protocol number for UDP/ICMP.
 Duration protocolTtl(int protocol, ATrustTcpConntrack? tcp) {
   switch (protocol) {
     case tcpProtocol:
@@ -124,6 +131,8 @@ Duration protocolTtl(int protocol, ATrustTcpConntrack? tcp) {
   }
 }
 
+/// Updates conntrack state for one packet, dispatching to the TCP state
+/// machine for TCP packets or setting protocol-specific TTLs for UDP/ICMP.
 void observeConntrackPacket(
   ATrustTcpConntrack? conntrack,
   Uint8List packet,

@@ -11,10 +11,12 @@ deployments only.
 
 The package scaffold declares Android, iOS, Windows, macOS, and Linux targets.
 The connection control plane is wired consistently on every declared platform.
-`getState` and `disconnect` are available on native adapters. The aTrust package
-also provides a Dart protocol connector for authenticated control-plane testing;
-native `connect` remains explicitly `unsupported` until platform VPN adapters
-are implemented.
+`getState` and `disconnect` are available on native adapters. The platform
+channel `connect` is intentionally `unsupported`: the Dart connectors
+(`ATrustConnector` / `EasyConnectConnector`) own the full login and tunnel
+bring-up, and platform TUN adapters (`WintunDevice`, `TunDevice`,
+`UtunDevice`, `AndroidVpnDevice`, `IosVpnDevice`) are invoked via FFI/IPC
+after a `connected` session is established.
 
 ## API direction
 
