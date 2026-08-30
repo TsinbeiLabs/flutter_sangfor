@@ -149,8 +149,14 @@ void main() {
     final server = SangforSocks5Server(
       dialer: (host, port) async {
         dialHosts.add(host);
-        final address = await InternetAddress.lookup(host);
-        final socket = await Socket.connect(address.first, port);
+        final addresses = await InternetAddress.lookup(host);
+        // Prefer IPv4: the echo server binds the IPv4 loopback only, and on
+        // some platforms `localhost` resolves to ::1 first.
+        final address = addresses.firstWhere(
+          (address) => address.type == InternetAddressType.IPv4,
+          orElse: () => addresses.first,
+        );
+        final socket = await Socket.connect(address, port);
         return SocketTcpStream(socket);
       },
     );
