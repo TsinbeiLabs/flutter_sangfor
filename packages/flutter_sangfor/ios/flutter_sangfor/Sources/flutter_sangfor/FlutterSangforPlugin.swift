@@ -69,7 +69,7 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
     dnsServers: [String],
     completion: @escaping (Bool, Error?) -> Void
   ) {
-    NETunnelProviderManager.loadAllPreferencesFromManagers { managers, error in
+    NETunnelProviderManager.loadAllFromPreferences { managers, error in
       if let error = error {
         completion(false, error)
         return
