@@ -141,6 +141,59 @@ Both `SangforTunnelRouter` and `SangforSocks5Server` accept a
 the proxy with all live sessions, including in-flight dials. The example
 app (`example/`) ships a SOCKS5 demo with a loopback echo round-trip test.
 
+## iOS system VPN setup
+
+iOS system-level routing runs through a Packet Tunnel Provider app
+extension (`NEPacketTunnelProvider`) managed by `NETunnelProviderManager`.
+Entitlements belong to your App ID and targets, not to this pub package,
+so the steps below happen in your app's Xcode project:
+
+1. **Requirements**: a paid Apple Developer Program membership and a
+   physical device (the Network Extension entitlement cannot be exercised
+   in the simulator).
+2. **Add the extension target**: in Xcode, `File > New > Target > Network
+   Extension`, choose "Packet Tunnel Provider". Name it (conventionally
+   `SangforPacketTunnel`); its bundle identifier must start with your
+   app's bundle identifier (for example
+   `com.example.app.SangforPacketTunnel`).
+3. **Link the core**: the extension needs the Flutter-free
+   `SangforTunnelCore` module. With Swift Package Manager add the local
+   package at `<your pub cache>/flutter_sangfor/ios/flutter_sangfor` and
+   link its `SangforTunnelCore` product to the extension target (see
+   `example/ios` for a working setup). With CocoaPods, add to your
+   `Podfile`:
+
+   ```ruby
+   target 'SangforPacketTunnel' do
+     use_frameworks!
+     pod 'SangforTunnelCore', :path => File.join('.symlinks', 'plugins', 'flutter_sangfor', 'ios')
+   end
+   ```
+4. **Replace the generated provider** with the thin wrapper (templates in
+   `ios/templates/`):
+
+   ```swift
+   import SangforTunnelCore
+
+   final class PacketTunnelProvider: SangforPacketTunnelProvider {}
+   ```
+5. **Entitlements**: enable the Network Extensions capability
+   (`packet-tunnel-provider`) and an App Group on both the Runner target
+   and the extension target; use the same App Group identifier on both.
+6. **Embed**: Xcode adds the extension to the app's Embed App Extensions
+   build phase automatically when the target is created this way; verify it
+   exists.
+7. **Dart configuration**: pass `providerBundleIdentifier` and
+   `appGroupIdentifier` to `IosVpnDevice.start`.
+8. **First run**: the system shows a VPN permission prompt the first time
+   a configuration is saved; the VPN entry then appears in
+   Settings > General > VPN & Device Management.
+
+The current iOS data plane forwards packets from the extension to your
+Flutter app over a loopback TCP bridge (EXPERIMENTAL / FOREGROUND
+BRIDGE): the Runner must stay alive, so treat it as a functional baseline
+rather than a background-capable production architecture.
+
 ## Package family
 
 Use `flutter_sangfor` for common lifecycle and platform abstractions. Add

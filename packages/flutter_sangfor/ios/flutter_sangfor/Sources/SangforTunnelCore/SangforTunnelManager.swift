@@ -1,6 +1,22 @@
 import Foundation
 import NetworkExtension
 
+/// Stable string names mirrored by the Dart `IosVpnStatus` enum.
+extension NEVPNStatus {
+  /// Machine-readable name matching `NEVPNStatus` case names.
+  public var sangforName: String {
+    switch self {
+    case .invalid: "invalid"
+    case .disconnected: "disconnected"
+    case .connecting: "connecting"
+    case .connected: "connected"
+    case .reasserting: "reasserting"
+    case .disconnecting: "disconnecting"
+    @unknown default: "invalid"
+    }
+  }
+}
+
 /// Errors surfaced by the tunnel manager and translated into method-channel
 /// error codes for the Dart side.
 public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
@@ -209,6 +225,29 @@ public final class SangforTunnelManager {
       return
     }
     manager.removeFromPreferences(completionHandler: completion)
+  }
+
+  /// Sends a control message to the running provider via
+  /// NETunnelProviderSession. Data-plane traffic stays on the loopback
+  /// bridge; this is the control-plane channel.
+  public func sendProviderMessage(
+    _ data: Data,
+    completion: @escaping (Data?, Error?) -> Void
+  ) {
+    guard let session = manager?.connection as? NETunnelProviderSession else {
+      completion(
+        nil,
+        SangforTunnelError.tunnelStartFailed("The tunnel is not running.")
+      )
+      return
+    }
+    do {
+      try session.sendProviderMessage(data) { responseData in
+        completion(responseData, nil)
+      }
+    } catch {
+      completion(nil, error)
+    }
   }
 
   /// The current connection status.
