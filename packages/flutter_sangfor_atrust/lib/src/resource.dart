@@ -98,7 +98,6 @@ class ATrustResourceParser {
       _string(options['secondDNS']) ?? _string(fallback['secondDNS']) ?? '',
     ]..removeWhere((value) => value.isEmpty);
     final config = _map(_map(appList['config'])['nodeGroupConf']);
-    final major = _string(_map(config['majorNodeGroup'])['id']) ?? '';
     final nodeGroups = <String, ATrustNodeGroup>{};
     for (final item in _list(config['nodeGroupList']).whereType<Map>()) {
       final group = _map(item);
@@ -117,6 +116,18 @@ class ATrustResourceParser {
         if (type == 'lan') lan.add(address);
       }
       nodeGroups[id] = ATrustNodeGroup(wan: wan, lan: lan);
+    }
+    // Gateways advertise the major group either as {"id": ...} or as a bare
+    // id string; some omit it while still listing the groups.
+    final majorRaw = config['majorNodeGroup'];
+    var major = switch (majorRaw) {
+      final String value => value,
+      Map value => _string(value['id']) ?? '',
+      _ => '',
+    };
+    if ((major.isEmpty || !nodeGroups.containsKey(major)) &&
+        nodeGroups.isNotEmpty) {
+      major = nodeGroups.keys.first;
     }
     return ATrustResource(
       routes: routes,
@@ -206,28 +217,29 @@ ATrustRoute? matchL3Route(
 }
 
 /// Finds the route for a TCP-tunnel destination, preferring apps that do NOT
-/// prefer L3, mirroring the upstream MatchLastWhere behavior.
+/// prefer L3, mirroring the upstream MatchLastWhere behavior. When
+/// [includeL3Preferred] is set (in-app proxying, where no L3 data plane
+/// exists) routes that prefer L3 are still accepted as a fallback.
 ATrustRoute? matchTcpRoute(
   List<ATrustRoute> routes,
   String destHost,
-  int port,
-) {
-  if (_isIPv4(destHost)) {
+  int port, {
+  bool includeL3Preferred = false,
+}) {
+  ATrustRoute? match(bool allowL3Preferred) {
     for (final route in routes) {
       if (route.protocol != 'all' && route.protocol != 'tcp') continue;
       if (port < route.portMin || port > route.portMax) continue;
-      if (route.enableTcpPrefL3) continue;
-      if (atrustRouteHostCovers(route.host, destHost)) return route;
+      if (route.enableTcpPrefL3 && !allowL3Preferred) continue;
+      final covered = _isIPv4(destHost)
+          ? atrustRouteHostCovers(route.host, destHost)
+          : atrustRouteDomainCovers(route.host, destHost);
+      if (covered) return route;
     }
     return null;
   }
-  for (final route in routes) {
-    if (route.protocol != 'all' && route.protocol != 'tcp') continue;
-    if (port < route.portMin || port > route.portMax) continue;
-    if (route.enableTcpPrefL3) continue;
-    if (atrustRouteDomainCovers(route.host, destHost)) return route;
-  }
-  return null;
+
+  return match(false) ?? (includeL3Preferred ? match(true) : null);
 }
 
 Map<String, Object?> _map(Object? value) =>

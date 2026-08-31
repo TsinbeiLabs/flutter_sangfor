@@ -224,18 +224,14 @@ class ATrustSessionApi {
 
   Uri _uri(String path) => server.replace(
         path: path,
-        queryParameters: const <String, String>{
-          'clientType': 'SDPClient',
-          'platform': 'Flutter',
-          'lang': 'en-US',
-        },
+        queryParameters: atrustSharedQuery,
         fragment: '',
       );
 
   Map<String, String> _headers({bool includeContentType = true}) =>
       <String, String>{
         'accept': 'application/json',
-        'user-agent': 'flutter_sangfor',
+        'user-agent': atrustUserAgent,
         'x-csrf-token': csrfToken,
         'x-sdp-rid': base64Encode(utf8.encode(server.authority)),
         if (includeContentType)

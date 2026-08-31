@@ -17,8 +17,10 @@ typedef ATrustTunnelSocketFactory = Future<ATrustTunnelChannel> Function(
   int port,
 );
 
-/// TLS trust policy for tunnel connections: the platform trust store by
-/// default, optionally a caller-supplied context and/or anti-MITM pinning.
+/// TLS trust policy for tunnel connections. aTrust tunnel nodes commonly
+/// present self-signed certificates, so certificates rejected by the
+/// platform trust store are accepted unless anti-MITM identity digests are
+/// available for pinning.
 class ATrustTunnelTlsPolicy {
   const ATrustTunnelTlsPolicy({this.securityContext, this.antiMitm});
 
@@ -38,16 +40,8 @@ ATrustTunnelSocketFactory atrustDefaultSocketFactory([
       port,
       context: tlsPolicy.securityContext,
       timeout: const Duration(seconds: 10),
-      onBadCertificate: antiMitm == null
-          ? null
-          : (certificate) {
-              try {
-                antiMitm.verifyCertificateIdentity([certificate.der]);
-                return true;
-              } on Object {
-                return false;
-              }
-            },
+      onBadCertificate: (certificate) =>
+          antiMitm?.acceptsCertificate(certificate.der) ?? true,
     );
     return ATrustSecureSocketChannel.fromSocket(socket);
   };
@@ -62,6 +56,7 @@ class ATrustTunnel {
     required ATrustL3ClientInfo info,
     required Uint8List signKey,
     ATrustTunnelSocketFactory? socketFactory,
+    ATrustTunnelTlsPolicy? tlsPolicy,
     ATrustNodeDialer? nodeDialer,
     Map<String, String>? bestNodes,
     this.reconnectInterval = const Duration(seconds: 5),
@@ -69,7 +64,7 @@ class ATrustTunnel {
     this.onError,
   })  : _info = info,
         _signKey = Uint8List.fromList(signKey),
-        _socketFactory = socketFactory ?? atrustDefaultSocketFactory(),
+        _socketFactory = socketFactory ?? atrustDefaultSocketFactory(tlsPolicy),
         _nodeDialer = nodeDialer ?? atrustTcpProbeDialer,
         _bestNodes =
             bestNodes != null ? Map<String, String>.of(bestNodes) : null;
@@ -138,13 +133,23 @@ class ATrustTunnel {
   }
 
   /// Dials a single TCP connection through the SOCKS5-like tunnel.
+  ///
+  /// [includeL3Preferred] also accepts resources that prefer the L3 tunnel;
+  /// callers without an L3 data plane (in-app HTTP proxying) need this to
+  /// reach hosts the server marks as L3-preferred.
   Future<ATrustTcpTunnelConn> dialTcp(
     String host,
     int port, {
     String? resolvedIp,
     bool zeroRtt = false,
+    bool includeL3Preferred = false,
   }) async {
-    final route = matchTcpRoute(resource.routes, host, port);
+    final route = matchTcpRoute(
+      resource.routes,
+      host,
+      port,
+      includeL3Preferred: includeL3Preferred,
+    );
     if (route == null) {
       throw StateException('no TCP tunnel resource for $host:$port');
     }

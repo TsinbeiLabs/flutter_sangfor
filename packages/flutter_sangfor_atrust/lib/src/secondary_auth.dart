@@ -231,18 +231,13 @@ class ATrustSecondaryAuthenticator {
   Uri _uri(String path, [Map<String, String> query = const {}]) =>
       server.replace(
         path: path,
-        queryParameters: <String, String>{
-          'clientType': 'SDPClient',
-          'platform': 'Flutter',
-          'lang': 'en-US',
-          ...query,
-        },
+        queryParameters: <String, String>{...atrustSharedQuery, ...query},
         fragment: '',
       );
 
   Map<String, String> _headers() => <String, String>{
         'accept': 'application/json',
-        'user-agent': 'flutter_sangfor',
+        'user-agent': atrustUserAgent,
         'x-csrf-token': csrfToken,
         'x-sdp-rid': _rid(server),
         'x-sdp-traceid': _traceId(),

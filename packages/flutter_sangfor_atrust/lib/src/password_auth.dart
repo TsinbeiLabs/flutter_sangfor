@@ -44,11 +44,7 @@ class ATrustPasswordAuthenticator {
     };
     final uri = server.replace(
       path: '/passport/v1/auth/psw',
-      queryParameters: const <String, String>{
-        'clientType': 'SDPClient',
-        'platform': 'Flutter',
-        'lang': 'en-US',
-      },
+      queryParameters: atrustSharedQuery,
       fragment: '',
     );
     final response = await _client.post(
@@ -56,7 +52,7 @@ class ATrustPasswordAuthenticator {
       headers: <String, String>{
         'content-type': 'application/json;charset=utf-8',
         'accept': 'application/json',
-        'user-agent': 'flutter_sangfor',
+        'user-agent': atrustUserAgent,
         if (config.csrfToken != null) 'x-csrf-token': config.csrfToken!,
         'x-sdp-env': base64Encode(utf8.encode(jsonEncode(<String, String>{
           'deviceId': deviceId,

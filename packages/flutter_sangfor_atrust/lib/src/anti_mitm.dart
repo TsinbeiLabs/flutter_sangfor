@@ -155,6 +155,24 @@ class ATrustAntiMitmData {
     throw const FormatException('aTrust anti-MITM certificate mismatch');
   }
 
+  /// Opportunistic pinning for tunnel TLS: accepts the certificate when this
+  /// data carries no usable identity digests (aTrust tunnel nodes commonly
+  /// present self-signed certificates with no pinning material), and only
+  /// rejects it when digests are advertised and none of them match.
+  bool acceptsCertificate(List<int> der) {
+    if (enable != 1) return true;
+    final encodedCertificates = <String>[
+      if (rsaCertificate != null && rsaCertificate!.isNotEmpty) rsaCertificate!,
+      if (sm2EncryptionCertificate != null &&
+          sm2EncryptionCertificate!.isNotEmpty)
+        sm2EncryptionCertificate!,
+    ];
+    if (encodedCertificates.isEmpty) return true;
+    final expected =
+        encodedCertificates.map(_certificateDigestFromBase64).toSet();
+    return expected.contains(_certificateDigest(der));
+  }
+
   void _requireEnabled() {
     if (enable != 1) throw StateError('anti-MITM is not enabled');
     if (devicePublicKeyModulus.isEmpty ||

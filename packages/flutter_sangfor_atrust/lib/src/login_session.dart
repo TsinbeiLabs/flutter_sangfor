@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_sangfor/flutter_sangfor.dart';
 
 import 'api.dart';
+import 'anti_mitm.dart';
 import 'auth_flow.dart';
 import 'password_auth.dart';
 import 'resource.dart';
@@ -42,11 +43,16 @@ class ATrustAuthenticatedSession {
     required this.username,
     required this.sid,
     required this.resource,
+    this.antiMitm,
   });
 
   final String username;
   final String sid;
   final ATrustResource resource;
+
+  /// Anti-MITM identity data advertised by the server; tunnel connections
+  /// use it to pin node TLS certificates when digests are available.
+  final ATrustAntiMitmData? antiMitm;
 }
 
 class ATrustUnsupportedChallenge implements Exception {
@@ -144,6 +150,7 @@ class ATrustLoginSession {
         resourceEnvelope,
         serverHost: options.server.host,
       ),
+      antiMitm: config.antiMitm,
     );
   }
 
@@ -170,6 +177,7 @@ class ATrustLoginSession {
       client: _sessionClient,
     );
     try {
+      final config = await api.fetchAuthConfig(snapshot.server);
       final onlineInfo = await sessionApi.fetchOnlineInfo();
       final resourceEnvelope = await api.fetchClientResource(
         server: snapshot.server,
@@ -182,11 +190,14 @@ class ATrustLoginSession {
           resourceEnvelope,
           serverHost: snapshot.server.host,
         ),
+        antiMitm: config.antiMitm,
       );
     } on ATrustApiException catch (error, stackTrace) {
+      final message = error.message.toLowerCase();
       if (error.statusCode == 401 ||
           error.statusCode == 403 ||
-          error.message.toLowerCase().contains('login')) {
+          message.contains('login') ||
+          message.contains('session')) {
         throw SangforException(
           SangforErrorCode.sessionExpired,
           'The aTrust session has expired',

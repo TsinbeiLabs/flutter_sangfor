@@ -832,6 +832,82 @@ void main() {
     expect(resource.majorNodeGroup, 'node-1');
   });
 
+  test('accepts a bare-string majorNodeGroup and falls back to the sole group',
+      () {
+    Map<String, Object?> resourceWithMajor(Object? major) => <String, Object?>{
+          'data': <String, Object?>{
+            'appList': <String, Object?>{
+              'data': <String, Object?>{
+                'config': <String, Object?>{
+                  'nodeGroupConf': <String, Object?>{
+                    'majorNodeGroup': major,
+                    'nodeGroupList': <Object?>[
+                      <String, Object?>{
+                        'id': 'group-a',
+                        'addressInfo': <Object?>[
+                          <String, Object?>{
+                            'address': 'wan.example.com',
+                            'type': 'wan',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        };
+
+    final bareString =
+        const ATrustResourceParser().parse(resourceWithMajor('group-a'));
+    expect(bareString.majorNodeGroup, 'group-a');
+    expect(bareString.nodeGroups['group-a']!.wan.single, 'wan.example.com:441');
+
+    final missing = const ATrustResourceParser().parse(resourceWithMajor(null));
+    expect(missing.majorNodeGroup, 'group-a');
+
+    final unknown = const ATrustResourceParser()
+        .parse(resourceWithMajor(<String, Object?>{'id': 'no-such-group'}));
+    expect(unknown.majorNodeGroup, 'group-a');
+  });
+
+  test('matchTcpRoute falls back to L3-preferred routes on demand', () {
+    ATrustRoute route(String host, {bool tcpPrefL3 = false}) => ATrustRoute(
+          host: host,
+          protocol: 'tcp',
+          portMin: 443,
+          portMax: 443,
+          appId: 'app-$host',
+          nodeGroupId: 'group-1',
+          addrPretend: true,
+          enableTcpPrefL3: tcpPrefL3,
+        );
+    final routes = <ATrustRoute>[
+      route('plain.example.com'),
+      route('l3.example.com', tcpPrefL3: true),
+    ];
+
+    expect(matchTcpRoute(routes, 'plain.example.com', 443)!.appId,
+        'app-plain.example.com');
+    expect(matchTcpRoute(routes, 'l3.example.com', 443), isNull);
+    expect(
+      matchTcpRoute(
+        routes,
+        'l3.example.com',
+        443,
+        includeL3Preferred: true,
+      )!
+          .appId,
+      'app-l3.example.com',
+    );
+    expect(
+      matchTcpRoute(routes, 'no-such.example.com', 443,
+          includeL3Preferred: true),
+      isNull,
+    );
+  });
+
   test('sends an independently generated RSA password payload', () async {
     final client = FakeHttpClient();
     final config = ATrustAuthConfig(

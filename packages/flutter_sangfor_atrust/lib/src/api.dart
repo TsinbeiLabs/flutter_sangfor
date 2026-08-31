@@ -61,6 +61,23 @@ class ATrustApiException implements Exception {
       : 'ATrustApiException($statusCode): $message';
 }
 
+/// Query parameters shared by every aTrust HTTP endpoint. Gateways validate
+/// `platform` against their known client list and reject unknown values with
+/// HTTP 422, so this must stay a platform string the server accepts. `Linux`
+/// is the desktop client value proven against real deployments.
+const Map<String, String> atrustSharedQuery = <String, String>{
+  'clientType': 'SDPClient',
+  'platform': 'Linux',
+  'lang': 'en-US',
+};
+
+/// User-Agent presented to aTrust gateways. Servers fingerprint the client
+/// from this string, so it mirrors the Linux desktop (aTrustTray) client.
+const String atrustUserAgent =
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'aTrustTray/2.4.10.50 Chrome/83.0.4103.94 Electron/9.0.2 Safari/537.36 '
+    'aTrustTray-Linux-Plat-Ubuntu-x64 SPCClientType';
+
 /// HTTPS discovery client. It deliberately uses the platform trust store.
 class ATrustApiClient {
   ATrustApiClient({
@@ -113,11 +130,7 @@ class ATrustApiClient {
   }) async {
     final uri = server.replace(
       path: '/controller/v1/user/clientResource',
-      queryParameters: const <String, String>{
-        'clientType': 'SDPClient',
-        'platform': 'Flutter',
-        'lang': 'en-US',
-      },
+      queryParameters: atrustSharedQuery,
       fragment: '',
     );
     final response = await _client.post(
@@ -125,7 +138,7 @@ class ATrustApiClient {
       headers: <String, String>{
         'content-type': 'application/json;charset=utf-8',
         'accept': 'application/json',
-        'user-agent': 'flutter_sangfor',
+        'user-agent': atrustUserAgent,
         'x-csrf-token': csrfToken,
         'x-sdp-rid': _rid(server),
         'x-sdp-traceid': _traceId(),
@@ -178,19 +191,14 @@ class ATrustApiClient {
   ) async {
     final uri = server.replace(
       path: path,
-      queryParameters: <String, String>{
-        'clientType': 'SDPClient',
-        'platform': 'Flutter',
-        'lang': 'en-US',
-        ...extraQuery,
-      },
+      queryParameters: <String, String>{...atrustSharedQuery, ...extraQuery},
       fragment: '',
     );
     final response = await _client.get(
       uri,
       headers: <String, String>{
         'accept': 'application/json',
-        'user-agent': 'flutter_sangfor',
+        'user-agent': atrustUserAgent,
         'x-sdp-rid': _rid(server),
         'x-sdp-traceid': _traceId(),
       },
