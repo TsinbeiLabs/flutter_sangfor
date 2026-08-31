@@ -5,7 +5,15 @@ import Network
 /// PacketTunnelProvider that bridges the iOS system VPN packet flow to the
 /// Flutter app via a local TCP loopback socket (port 6400). Each packet is
 /// framed with a 4-byte big-endian length prefix in both directions.
-class SangforPacketTunnelProvider: NEPacketTunnelProvider {
+///
+/// This type lives in `SangforTunnelCore`, which deliberately does not
+/// depend on Flutter: consumer apps embed a thin `.appex` wrapper around it
+/// as their Packet Tunnel Provider extension target.
+///
+/// EXPERIMENTAL / FOREGROUND BRIDGE: the loopback design requires the
+/// containing Flutter app to stay alive; see the repository docs before
+/// relying on it for background VPN use.
+public class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private var listener: NWListener?
   private var connection: NWConnection?
   private var readLoopRunning = false
@@ -16,7 +24,7 @@ class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private var routes: [String] = []
   private var dnsServers: [String] = []
 
-  override func startTunnel(
+  public override func startTunnel(
     options: [String: NSObject]?,
     completionHandler: @escaping (Error?) -> Void
   ) {
@@ -37,15 +45,15 @@ class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     }
     settings.ipv4Settings = ipv4
     settings.dnsSettings = NEDNSSettings(servers: dnsServers)
-    setTunnelNetworkSettings(settings) { [weak self] error in
-      if let error = error {
-        completionHandler(error)
-        return
+      setTunnelNetworkSettings(settings) { [weak self] error in
+        if let error {
+          completionHandler(error)
+          return
+        }
+        self?.startIpcListener()
+        self?.startPacketFlowReadLoop()
+        completionHandler(nil)
       }
-      self?.startIpcListener()
-      self?.startPacketFlowReadLoop()
-      completionHandler(nil)
-    }
   }
 
   private func prefixToMask(_ prefix: UInt32) -> String {
@@ -60,7 +68,7 @@ class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     )
   }
 
-  override func stopTunnel(
+  public override func stopTunnel(
     with reason: NEProviderStopReason,
     completionHandler: @escaping () -> Void
   ) {
