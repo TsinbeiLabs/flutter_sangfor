@@ -1,6 +1,22 @@
 import Foundation
 import NetworkExtension
 
+/// Stable string names mirrored by the Dart `IosVpnStatus` enum.
+extension NEVPNStatus {
+  /// Machine-readable name matching `NEVPNStatus` case names.
+  public var sangforName: String {
+    switch self {
+    case .invalid: "invalid"
+    case .disconnected: "disconnected"
+    case .connecting: "connecting"
+    case .connected: "connected"
+    case .reasserting: "reasserting"
+    case .disconnecting: "disconnecting"
+    @unknown default: "invalid"
+    }
+  }
+}
+
 /// Errors surfaced by the tunnel manager and translated into method-channel
 /// error codes for the Dart side.
 public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
