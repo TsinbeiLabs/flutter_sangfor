@@ -55,16 +55,62 @@ jobs:
         working-directory: packages/flutter_sangfor/example
 
   publish:
-    name: publish (${{ matrix.package }})
+    name: publish (flutter_sangfor)
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
     needs: [packages, windows]
+    permissions:
+      id-token: write
+      contents: read
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/flutter_sangfor
+
+  await-root-on-pub:
+    # Lockstep releases: the connectors resolve flutter_sangfor from pub.dev,
+    # so wait until the freshly published root version is actually visible
+    # there before starting their publish jobs. Runs even when the root
+    # publish job itself failed (e.g. the version was already published by an
+    # earlier partial run) as long as pub.dev serves the expected version.
+    name: await flutter_sangfor on pub.dev
+    if: >-
+      always() && !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch')
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Poll pub.dev for the root package version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -m1 '^version:' packages/flutter_sangfor/pubspec.yaml | sed 's/version:[[:space:]]*//' | tr -d '"'"'"'[:space:]')
+          echo "Waiting for flutter_sangfor $version on pub.dev..."
+          for i in $(seq 1 60); do
+            if curl -fsS https://pub.dev/api/packages/flutter_sangfor \
+              | jq -e --arg v "$version" '.versions | index($v) != null' > /dev/null; then
+              echo "flutter_sangfor $version is live on pub.dev"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::flutter_sangfor $version did not appear on pub.dev within 10 minutes"
+          exit 1
+
+  publish-connectors:
+    name: publish (${{ matrix.package }})
+    if: >-
+      always() && !cancelled() &&
+      needs.await-root-on-pub.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch')
+    needs: await-root-on-pub
     strategy:
       fail-fast: false
       matrix:
         package:
-          - flutter_sangfor
           - flutter_sangfor_atrust
           - flutter_sangfor_easy_connect
     permissions:
