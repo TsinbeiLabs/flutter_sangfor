@@ -1,6 +1,6 @@
 name: flutter_sangfor
 description: "Flutter integration for Sangfor aTrust and Easy Connect VPNs with an independently implemented protocol core"
-version: 0.0.2
+version: 0.0.3
 repository: https://github.com/TsinbeiLabs/flutter_sangfor
 issue_tracker: https://github.com/TsinbeiLabs/flutter_sangfor/issues
 
@@ -37,7 +37,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.tsinbeilabs.flutter_sangfor
+        package: com.tsinbei.flutter_sangfor
         pluginClass: FlutterSangforPlugin
       ios:
         pluginClass: FlutterSangforPlugin

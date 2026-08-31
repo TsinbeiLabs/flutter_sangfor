@@ -1,4 +1,4 @@
-package com.tsinbeilabs.flutter_sangfor_example
+package com.tsinbei.flutter_sangfor_example
 
 import io.flutter.embedding.android.FlutterActivity
 

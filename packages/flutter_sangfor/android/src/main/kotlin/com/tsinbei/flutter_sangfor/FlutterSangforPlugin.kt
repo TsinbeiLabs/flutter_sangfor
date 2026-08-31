@@ -1,4 +1,4 @@
-package com.tsinbeilabs.flutter_sangfor
+package com.tsinbei.flutter_sangfor
 
 import android.app.Activity
 import android.content.Intent
@@ -17,15 +17,20 @@ class FlutterSangforPlugin :
     MethodCallHandler,
     ActivityAware {
     private lateinit var channel: MethodChannel
+    @Volatile
     private var state = "disconnected"
     private var activity: Activity? = null
     private var applicationContext: android.content.Context? = null
     private var pendingPermissionResult: Result? = null
+    private val vpnExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_sangfor")
         channel.setMethodCallHandler(this)
         applicationContext = flutterPluginBinding.applicationContext
+        val events = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_sangfor/service")
+        events.setMethodCallHandler { _, result -> result.notImplemented() }
+        serviceEventChannel = events
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -96,32 +101,56 @@ class FlutterSangforPlugin :
             }
             "vpnStart" -> {
                 val context = activity?.applicationContext
+                    ?: applicationContext
                 if (context == null) {
                     result.error("no_activity", "The VPN service needs an attached activity.", null)
                     return
                 }
-                VpnTunnelService.start(context)
-                // The foreground service takes a moment to come up; establish
-                // once it reports itself active.
-                val started = waitForService()
-                if (!started) {
-                    result.error("vpn_start_failed", "The VPN service did not start.", null)
-                    return
+                val address = call.argument<String>("address") ?: "10.0.0.2"
+                val prefixLength = call.argument<Int>("prefixLength") ?: 32
+                val routes = call.argument<List<String>>("routes") ?: emptyList()
+                val dnsServers = call.argument<List<String>>("dnsServers") ?: emptyList()
+                val searchDomains = call.argument<List<String>>("searchDomains") ?: emptyList()
+                val mtu = call.argument<Int>("mtu") ?: 0
+                val proxyHost = call.argument<String>("proxyHost") ?: ""
+                val proxyPort = call.argument<Int>("proxyPort") ?: 0
+                val notificationTitle = call.argument<String>("notificationTitle") ?: "VPN"
+                val disconnectLabel = call.argument<String>("disconnectLabel") ?: "Disconnect"
+                // The service reports itself from the main thread, so the
+                // blocking wait must run off the platform thread; otherwise
+                // the service can never come up (main thread deadlock -> ANR).
+                vpnExecutor.execute {
+                    VpnTunnelService.start(context)
+                    val started = waitForService()
+                    if (!started) {
+                        result.error("vpn_start_failed", "The VPN service did not start.", null)
+                        return@execute
+                    }
+                    val fd = VpnTunnelService.activeService?.establish(
+                        address,
+                        prefixLength,
+                        routes,
+                        dnsServers,
+                        searchDomains,
+                        mtu,
+                        proxyHost,
+                        proxyPort,
+                        notificationTitle,
+                        disconnectLabel,
+                    )
+                    if (fd == null) {
+                        result.error("vpn_establish_failed", "VpnService.Builder.establish() returned null.", null)
+                    } else {
+                        state = "connected"
+                        result.success(fd)
+                    }
                 }
-                val fd = VpnTunnelService.activeService?.establish(
-                    call.argument<String>("address") ?: "10.0.0.2",
-                    call.argument<Int>("prefixLength") ?: 32,
-                    call.argument<List<String>>("routes") ?: emptyList(),
-                    call.argument<List<String>>("dnsServers") ?: emptyList(),
-                    call.argument<List<String>>("searchDomains") ?: emptyList(),
-                    call.argument<Int>("mtu") ?: 0,
-                )
-                if (fd == null) {
-                    result.error("vpn_establish_failed", "VpnService.Builder.establish() returned null.", null)
-                    return
-                }
-                state = "connected"
-                result.success(fd)
+            }
+            "vpnStats" -> {
+                val down = (call.argument<Number>("down") ?: 0).toLong()
+                val up = (call.argument<Number>("up") ?: 0).toLong()
+                VpnTunnelService.activeService?.updateStats(down, up)
+                result.success(null)
             }
             "vpnStop" -> {
                 val context = activity?.applicationContext ?: applicationContext
@@ -148,10 +177,23 @@ class FlutterSangforPlugin :
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        serviceEventChannel = null
         channel.setMethodCallHandler(null)
     }
 
     companion object {
         private const val VPN_PREPARE_REQUEST_CODE = 7201
+
+        @Volatile
+        private var serviceEventChannel: MethodChannel? = null
+        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        /** Invoked by [VpnTunnelService] when the user taps the
+         * notification's disconnect action. */
+        fun requestDisconnect() {
+            mainHandler.post {
+                serviceEventChannel?.invokeMethod("disconnectRequested", null)
+            }
+        }
     }
 }

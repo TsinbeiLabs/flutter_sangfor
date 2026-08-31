@@ -1,4 +1,4 @@
-group = "com.tsinbeilabs.flutter_sangfor"
+group = "com.tsinbei.flutter_sangfor"
 version = "1.0-SNAPSHOT"
 
 buildscript {
@@ -26,7 +26,7 @@ plugins {
 }
 
 android {
-    namespace = "com.tsinbeilabs.flutter_sangfor"
+    namespace = "com.tsinbei.flutter_sangfor"
 
     compileSdk = 36
 

@@ -1,4 +1,4 @@
-package com.tsinbeilabs.flutter_sangfor
+package com.tsinbei.flutter_sangfor
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel

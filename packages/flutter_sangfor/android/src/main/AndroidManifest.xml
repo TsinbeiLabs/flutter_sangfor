@@ -1,7 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.tsinbeilabs.flutter_sangfor">
+  package="com.tsinbei.flutter_sangfor">
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <application>
     <service
       android:name=".VpnTunnelService"

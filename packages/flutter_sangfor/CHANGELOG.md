@@ -1,3 +1,16 @@
+## 0.0.3
+
+* Fix an Android ANR: establish the tunnel from a background executor instead
+  of blocking the platform thread while the service comes up.
+* Fall back to the underlying network's DNS resolvers when the server
+  publishes none, and keep those resolvers outside the TUN routes.
+* Advertise the caller's loopback HTTP proxy as the VPN system proxy on
+  Android 13+ so domain-published resources work in system mode.
+* Add a persistent notification with live speed, uptime, and a disconnect
+  action; dismissed notifications recover via the delete intent.
+* Add `AndroidVpnDevice.updateStats` and `disconnectRequests` plumbing.
+* BREAKING CHANGE: rename the Android namespace from
+  `com.tsinbeilabs.flutter_sangfor` to `com.tsinbei.flutter_sangfor`.
 ## 0.0.2
 
 * Add library-level dartdoc for the public API surface.
