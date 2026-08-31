@@ -1,3 +1,6 @@
+## 0.0.3
+
+* Lockstep release with `flutter_sangfor` 0.0.3.
 ## 0.0.2
 
 * Bump the pointycastle dependency to ^4.0.0.

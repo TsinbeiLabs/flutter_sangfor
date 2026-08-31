@@ -1,3 +1,14 @@
+## 0.0.3
+
+* Add `matchTcpRoute(..., includeL3Preferred)` and
+  `ATrustTunnel.dialTcp(..., includeL3Preferred)` so callers without an L3
+  data plane can still reach L3-preferred resources through TCP tunnels.
+* Map "session is invalid" resume errors to `VpnSessionExpiredException`
+  so stored snapshots fall back to a password login.
+* Carry anti-MITM identity data onto tunnel connections and accept
+  self-signed node certificates when no digests are advertised.
+* Present the Linux desktop (aTrustTray) platform fingerprint on every
+  aTrust HTTP endpoint.
 ## 0.0.2
 
 * Bump the pointycastle dependency to ^4.0.0.
