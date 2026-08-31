@@ -50,6 +50,8 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
     case "vpnStop":
       tunnelManager?.stop()
       result(nil)
+    case "vpnStats":
+      requestStats(result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -222,6 +224,36 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       )
     }
     return FlutterError(code: "tunnelStartFailed", message: error.localizedDescription, details: nil)
+  }
+
+  /// Forwards a getStats control message to the running provider.
+  private func requestStats(result: @escaping FlutterResult) {
+    guard let tunnelManager else {
+      result(nil)
+      return
+    }
+    struct StatsRequest: Codable {
+      var action: String
+    }
+    let encoder = JSONEncoder()
+    guard let message = try? encoder.encode(StatsRequest(action: "getStats")) else {
+      result(nil)
+      return
+    }
+    tunnelManager.sendProviderMessage(message) { data, error in
+      if let error {
+        result(self.flutterError(for: error))
+        return
+      }
+      guard
+        let data,
+        let stats = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+      else {
+        result(nil)
+        return
+      }
+      result(stats)
+    }
   }
 }
 

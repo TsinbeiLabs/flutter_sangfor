@@ -227,6 +227,29 @@ public final class SangforTunnelManager {
     manager.removeFromPreferences(completionHandler: completion)
   }
 
+  /// Sends a control message to the running provider via
+  /// NETunnelProviderSession. Data-plane traffic stays on the loopback
+  /// bridge; this is the control-plane channel.
+  public func sendProviderMessage(
+    _ data: Data,
+    completion: @escaping (Data?, Error?) -> Void
+  ) {
+    guard let session = manager?.connection as? NETunnelProviderSession else {
+      completion(
+        nil,
+        SangforTunnelError.tunnelStartFailed("The tunnel is not running.")
+      )
+      return
+    }
+    do {
+      try session.sendProviderMessage(data) { responseData in
+        completion(responseData, nil)
+      }
+    } catch {
+      completion(nil, error)
+    }
+  }
+
   /// The current connection status.
   public var status: NEVPNStatus {
     manager?.connection.status ?? .invalid
