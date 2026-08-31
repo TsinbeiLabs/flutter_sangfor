@@ -13,7 +13,7 @@ import Network
 /// EXPERIMENTAL / FOREGROUND BRIDGE: the loopback design requires the
 /// containing Flutter app to stay alive; see the repository docs before
 /// relying on it for background VPN use.
-public class SangforPacketTunnelProvider: NEPacketTunnelProvider {
+open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private var listener: NWListener?
   private var connection: NWConnection?
   private var readLoopRunning = false
