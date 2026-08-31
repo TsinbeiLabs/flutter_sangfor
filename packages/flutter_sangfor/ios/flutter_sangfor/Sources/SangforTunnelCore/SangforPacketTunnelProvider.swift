@@ -263,11 +263,16 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private func startIpcListener() {
     do {
       let params = NWParameters.tcp
-      params.allowLocalEndpointReuse = true
-      let listener = try NWListener(
-        using: params,
-        on: NWEndpoint.Port(rawValue: Self.ipcPort)!
+      // The bridge is strictly local to the device. Without pinning the
+      // endpoint to loopback, Network.framework registers the listener on
+      // the primary interface only (en0), which both drops connections from
+      // the Runner to 127.0.0.1 and exposes the port to the local network.
+      params.requiredLocalEndpoint = NWEndpoint.hostPort(
+        host: .ipv4(.loopback),
+        port: NWEndpoint.Port(rawValue: Self.ipcPort)!
       )
+      params.requiredInterfaceType = .loopback
+      let listener = try NWListener(using: params)
       listener.newConnectionHandler = { [weak self] connection in
         self?.acceptBridgeConnection(connection)
       }
