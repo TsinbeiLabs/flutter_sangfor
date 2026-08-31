@@ -20,6 +20,41 @@ enum IosVpnStatus {
       IosVpnStatus.invalid;
 }
 
+/// Incremental decoder for the 4-byte big-endian length-framed IPC stream
+/// shared with the packet tunnel extension. Accepts arbitrary TCP chunk
+/// boundaries; malformed frames (zero or oversized length) are skipped.
+class IpcFrameDecoder {
+  final BytesBuilder _buffer = BytesBuilder(copy: true);
+
+  /// Appends a received chunk.
+  void add(List<int> chunk) => _buffer.add(chunk);
+
+  /// Decodes every complete frame currently buffered.
+  List<Uint8List> drain() {
+    final frames = <Uint8List>[];
+    final bytes = _buffer.toBytes();
+    var offset = 0;
+    while (offset + 4 <= bytes.length) {
+      final length = ByteData.sublistView(bytes, offset, offset + 4)
+          .getUint32(0, Endian.big);
+      if (length == 0 || length > IosVpnDevice.maxFrameLength) {
+        // Malformed frame: skip the header and resynchronize.
+        offset += 4;
+        continue;
+      }
+      if (offset + 4 + length > bytes.length) break;
+      frames.add(
+          Uint8List.fromList(bytes.sublist(offset + 4, offset + 4 + length)));
+      offset += 4 + length;
+    }
+    _buffer.clear();
+    if (offset < bytes.length) {
+      _buffer.add(bytes.sublist(offset));
+    }
+    return frames;
+  }
+}
+
 /// A [SangforPacketDevice] backed by a local TCP connection to the
 /// Network Extension process. The NEPacketTunnelProvider writes packets
 /// from `packetFlow` into the socket, and reads packets from the socket
@@ -34,6 +69,9 @@ class IosVpnDevice implements SangforPacketDevice {
   static const EventChannel _statusChannel =
       EventChannel('flutter_sangfor/vpn_status');
   static const int _defaultIpcPort = 6400;
+
+  /// Maximum accepted IPC frame payload, mirroring the native decoder.
+  static const int maxFrameLength = 0xffff;
 
   final Socket _socket;
   final StreamController<Uint8List> _incoming =
@@ -143,6 +181,14 @@ class IosVpnDevice implements SangforPacketDevice {
     return prepared ?? false;
   }
 
+  /// Runtime counters reported by the packet tunnel extension via the
+  /// NETunnelProviderSession control channel. Returns `null` when the
+  /// tunnel is not running.
+  static Future<Map<String, Object?>?> stats() async {
+    if (!Platform.isIOS) return null;
+    return _channel.invokeMapMethod<String, Object?>('vpnStats');
+  }
+
   @override
   Future<void> send(Uint8List packet) async {
     if (_closed) return;
@@ -165,27 +211,14 @@ class IosVpnDevice implements SangforPacketDevice {
   }
 
   void _startListening() {
-    final buffer = BytesBuilder();
+    final decoder = IpcFrameDecoder();
     _subscription = _socket.listen(
       (chunk) {
-        buffer.add(chunk);
-        final bytes = buffer.toBytes();
-        var offset = 0;
-        while (offset + 4 <= bytes.length) {
-          final length = ByteData.sublistView(bytes, offset, offset + 4)
-              .getUint32(0, Endian.big);
-          if (offset + 4 + length > bytes.length) break;
-          final packet = Uint8List.fromList(
-            bytes.sublist(offset + 4, offset + 4 + length),
-          );
+        decoder.add(chunk);
+        for (final packet in decoder.drain()) {
           if (!_incoming.isClosed) {
             _incoming.add(packet);
           }
-          offset += 4 + length;
-        }
-        buffer.clear();
-        if (offset < bytes.length) {
-          buffer.add(bytes.sublist(offset));
         }
       },
       onDone: () {
