@@ -12,8 +12,12 @@ Flutter integration for Sangfor aTrust VPN with an independently ported protocol
   s.homepage         = 'http://example.com'
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Your Company' => 'email@example.com' }
-  s.source           = { :path => '.' }
-  s.source_files = 'flutter_sangfor/Sources/flutter_sangfor/**/*'
+  s.source = { :path => '.' }
+  # Compiles the Flutter plugin target and the Flutter-free
+  # SangforTunnelCore sources into a single module so plain Flutter
+  # `pod install` keeps working. Extension targets that need the core as a
+  # standalone module use SangforTunnelCore.podspec instead.
+  s.source_files = 'flutter_sangfor/Sources/**/*'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 
