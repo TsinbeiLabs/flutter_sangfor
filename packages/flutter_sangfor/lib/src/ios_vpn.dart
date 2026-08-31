@@ -6,14 +6,33 @@ import 'package:flutter/services.dart';
 
 import 'tunnel_io.dart';
 
+/// Mirrors `NEVPNStatus` on the native side.
+enum IosVpnStatus {
+  invalid,
+  disconnected,
+  connecting,
+  connected,
+  reasserting,
+  disconnecting;
+
+  static IosVpnStatus fromValue(String value) =>
+      IosVpnStatus.values.where((status) => status.name == value).firstOrNull ??
+      IosVpnStatus.invalid;
+}
+
 /// A [SangforPacketDevice] backed by a local TCP connection to the
 /// Network Extension process. The NEPacketTunnelProvider writes packets
 /// from `packetFlow` into the socket, and reads packets from the socket
 /// to inject into `packetFlow`.
+///
+/// EXPERIMENTAL / FOREGROUND BRIDGE: the loopback design requires the
+/// containing Flutter app to stay alive.
 class IosVpnDevice implements SangforPacketDevice {
   IosVpnDevice._(this._socket);
 
   static const MethodChannel _channel = MethodChannel('flutter_sangfor');
+  static const EventChannel _statusChannel =
+      EventChannel('flutter_sangfor/vpn_status');
   static const int _defaultIpcPort = 6400;
 
   final Socket _socket;
@@ -28,11 +47,25 @@ class IosVpnDevice implements SangforPacketDevice {
   @override
   bool get isClosed => _closed;
 
+  /// Live `NEVPNStatus` updates from the NetworkExtension manager.
+  static Stream<IosVpnStatus> get statusStream =>
+      _statusChannel.receiveBroadcastStream().map(
+            (event) => IosVpnStatus.fromValue(event as String? ?? ''),
+          );
+
   /// Starts the iOS VPN tunnel via the NetworkExtension framework and
   /// returns a packet device connected to the NE via local TCP.
   ///
-  /// [address], [prefixLength], [routes], [dnsServers] configure the
-  /// tunnel network settings.
+  /// [address], [prefixLength], [routes], [dnsServers], [searchDomains],
+  /// and [mtu] configure the tunnel network settings.
+  ///
+  /// [providerBundleIdentifier] identifies the consumer's packet tunnel
+  /// `.appex` target; resolution order is this argument, then the Runner
+  /// Info.plist key `SangforPacketTunnelBundleIdentifier`, then the legacy
+  /// default `<bundle-id>.SangforPacketTunnelProvider`.
+  ///
+  /// [appGroupIdentifier] names the App Group shared with the extension
+  /// (Info.plist key `SangforAppGroupIdentifier` as fallback).
   static Future<IosVpnDevice> start({
     required String address,
     required int prefixLength,
@@ -40,6 +73,9 @@ class IosVpnDevice implements SangforPacketDevice {
     List<String> dnsServers = const <String>[],
     List<String> searchDomains = const <String>[],
     int mtu = 0,
+    String? providerBundleIdentifier,
+    String? appGroupIdentifier,
+    String localizedDescription = 'flutter_sangfor',
   }) async {
     if (!Platform.isIOS) {
       throw UnsupportedError('IosVpnDevice requires iOS');
@@ -52,6 +88,9 @@ class IosVpnDevice implements SangforPacketDevice {
       'dnsServers': dnsServers,
       'searchDomains': searchDomains,
       'mtu': mtu,
+      'providerBundleIdentifier': providerBundleIdentifier,
+      'appGroupIdentifier': appGroupIdentifier,
+      'localizedDescription': localizedDescription,
     });
     if (started != true) {
       throw StateError('Failed to start the iOS VPN tunnel');
@@ -81,7 +120,23 @@ class IosVpnDevice implements SangforPacketDevice {
     return device;
   }
 
-  /// Whether the VPN permission has been granted to this app.
+  /// Installs (or loads) the VPN configuration. The first save triggers
+  /// the system VPN permission prompt.
+  static Future<void> installConfiguration({
+    String? providerBundleIdentifier,
+    String? appGroupIdentifier,
+    String localizedDescription = 'flutter_sangfor',
+  }) async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('vpnInstall', <String, Object?>{
+      'providerBundleIdentifier': providerBundleIdentifier,
+      'appGroupIdentifier': appGroupIdentifier,
+      'localizedDescription': localizedDescription,
+    });
+  }
+
+  /// Whether a VPN configuration created by this package exists and is
+  /// enabled (not a global Android-style permission).
   static Future<bool> get isPrepared async {
     if (!Platform.isIOS) return false;
     final prepared = await _channel.invokeMethod<bool>('vpnPrepare');
