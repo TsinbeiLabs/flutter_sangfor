@@ -71,6 +71,10 @@ public final class SangforTunnelManager {
   /// The localized description shown in iOS Settings for the VPN entry.
   public let localizedDescription: String
 
+  /// Opaque server identifier required by `NETunnelProviderProtocol` before
+  /// the configuration can be saved. Shown in iOS Settings' VPN entry.
+  public let serverAddress: String
+
   /// The loaded manager, if one has been loaded or installed.
   private(set) public var manager: NETunnelProviderManager?
 
@@ -79,11 +83,13 @@ public final class SangforTunnelManager {
   public init(
     providerBundleIdentifier: String,
     appGroupIdentifier: String? = nil,
-    localizedDescription: String = "flutter_sangfor"
+    localizedDescription: String = "flutter_sangfor",
+    serverAddress: String = "flutter_sangfor"
   ) {
     self.providerBundleIdentifier = providerBundleIdentifier
     self.appGroupIdentifier = appGroupIdentifier
     self.localizedDescription = localizedDescription
+    self.serverAddress = serverAddress
   }
 
   deinit {
@@ -287,6 +293,9 @@ public final class SangforTunnelManager {
   private func configure(_ manager: NETunnelProviderManager) {
     let protocolConfiguration = NETunnelProviderProtocol()
     protocolConfiguration.providerBundleIdentifier = providerBundleIdentifier
+    // iOS rejects configurations without a server address ("Missing server
+    // address" on save); the value is opaque for custom providers.
+    protocolConfiguration.serverAddress = serverAddress
     let configuration = SangforTunnelConfiguration(address: "0.0.0.0")
     protocolConfiguration.providerConfiguration =
       configuration.providerConfiguration(appGroupIdentifier: appGroupIdentifier)
