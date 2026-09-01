@@ -74,6 +74,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     completionHandler: @escaping (Error?) -> Void
   ) {
     let configuration = Self.configuration(from: options ?? [:])
+    SangforLog.provider(
+      "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0)"
+    )
 
     // Fail closed: a malformed route is logged and skipped, never silently
     // turned into a default route.
