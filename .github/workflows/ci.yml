@@ -90,7 +90,7 @@ jobs:
           echo "Waiting for flutter_sangfor $version on pub.dev..."
           for i in $(seq 1 60); do
             if curl -fsS https://pub.dev/api/packages/flutter_sangfor \
-              | jq -e --arg v "$version" '.versions | index($v) != null' > /dev/null; then
+              | jq -e --arg v "$version" '[.versions[].version] | index($v) != null' > /dev/null; then
               echo "flutter_sangfor $version is live on pub.dev"
               exit 0
             fi
