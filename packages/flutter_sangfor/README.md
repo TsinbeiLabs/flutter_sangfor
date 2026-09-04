@@ -9,14 +9,15 @@ redistribute Sangfor SDK binaries. The public API and platform adapters are
 being built incrementally, with protocol behavior tested against authorized
 deployments only.
 
-The package scaffold declares Android, iOS, Windows, macOS, and Linux targets.
+The package scaffold declares Android, iOS, OpenHarmony, Windows, macOS, and
+Linux targets.
 The connection control plane is wired consistently on every declared platform.
 `getState` and `disconnect` are available on native adapters. The platform
 channel `connect` is intentionally `unsupported`: the Dart connectors
 (`ATrustConnector` / `EasyConnectConnector`) own the full login and tunnel
 bring-up, and platform TUN adapters (`WintunDevice`, `TunDevice`,
-`UtunDevice`, `AndroidVpnDevice`, `IosVpnDevice`) are invoked via FFI/IPC
-after a `connected` session is established.
+`UtunDevice`, `AndroidVpnDevice`, `IosVpnDevice`, `OhosVpnDevice`) are
+invoked via FFI/IPC after a `connected` session is established.
 
 ## API direction
 
@@ -122,11 +123,12 @@ tunnel and a `SangforPacketDevice`: `WintunDevice` on Windows (requires the
 official signed `wintun.dll` from wintun.net beside the executable, plus an
 elevated process; address/route/DNS helpers use `netsh`), `TunDevice` on
 Linux (`/dev/net/tun`, `CAP_NET_ADMIN`), `UtunDevice` on macOS (utun via
-`AF_SYS_CONTROL`, requires root), and `AndroidVpnDevice` / `IosVpnDevice`
-for the mobile VPN frameworks (VpnService / NetworkExtension). Desktop and
-Android adapters run their read loops on a dedicated isolate; the iOS
-adapter bridges `NEPacketFlow` over a loopback TCP socket. None have been
-exercised against real interfaces yet.
+`AF_SYS_CONTROL`, requires root), and `AndroidVpnDevice` / `IosVpnDevice` /
+`OhosVpnDevice` for the mobile VPN frameworks (VpnService /
+NetworkExtension / VpnExtensionAbility). Desktop and Android adapters run
+their read loops on a dedicated isolate; the iOS adapter bridges
+`NEPacketFlow` over a loopback TCP socket. None have been exercised against
+real interfaces yet.
 
 ```dart
 final device = await WintunDevice.open(name: 'Sangfor');
@@ -194,6 +196,46 @@ Flutter app over a loopback TCP bridge (EXPERIMENTAL / FOREGROUND
 BRIDGE): the Runner must stay alive, so treat it as a functional baseline
 rather than a background-capable production architecture.
 
+## OpenHarmony system VPN setup
+
+HarmonyOS NEXT / OpenHarmony system-level routing runs through a
+`VpnExtensionAbility` (`@kit.NetworkKit`). The extension always runs in its
+own process, so the plugin transfers the TUN descriptor it receives from
+`VpnConnection.create()` back to your app process over an AF_UNIX socket
+with `SCM_RIGHTS`; Dart then reads and writes it directly through FFI,
+mirroring the Android adapter. The extension ability belongs to your app
+module, so two host-side steps are required (templates in `ohos/templates/`):
+
+1. **Add the ability class** to your entry module, for example
+   `entry/src/main/ets/vpnability/SangforVpnExtAbility.ets`:
+
+   ```typescript
+   import { SangforVpnExtAbility as SangforVpnExtAbilityBase } from 'flutter_sangfor';
+
+   export default class SangforVpnExtAbility extends SangforVpnExtAbilityBase {
+   }
+   ```
+2. **Register it** in the entry module's `module.json5` (the ability name
+   must stay `SangforVpnExtAbility`; the plugin starts/stops it by that
+   name):
+
+   ```json5
+   "extensionAbilities": [
+     {
+       "name": "SangforVpnExtAbility",
+       "srcEntry": "./ets/vpnability/SangforVpnExtAbility.ets",
+       "type": "vpn"
+     }
+   ]
+   ```
+
+Only `ohos.permission.INTERNET` is required (declared by the plugin HAR and
+merged into the host). The system shows a VPN authorization dialog the first
+time `OhosVpnDevice.start` runs; declining it surfaces as a failed start.
+The tunnel transport must stay outside the route list (the caller splits any
+CIDR block covering the tunnel endpoints), so no `protect()` handling is
+needed. MTU values are clamped to the system range `[576, 1500]`.
+
 ## Package family
 
 Use `flutter_sangfor` for common lifecycle and platform abstractions. Add
@@ -223,3 +265,9 @@ projects, which were used as behavior references:
   — EasyConnect token, Query-IP, RX/TX stream, heartbeat.
 - [WireGuard/wintun](https://www.wintun.net/)
   — Windows TUN adapter (official signed DLL loaded at runtime).
+- [xiaobaigroup/ClashBox](https://github.com/xiaobaigroup/ClashBox)
+  (GPL-3.0) — HarmonyOS NEXT VPN architecture reference only: it confirmed
+  the `VpnExtensionAbility` + `VpnConnection.create()` flow and config
+  shapes. No code was copied; the OpenHarmony adapter is written against
+  Huawei/OpenHarmony public API documentation (the VPN extension ability,
+  fd hand-off, and all ArkTS/C++ code are original).

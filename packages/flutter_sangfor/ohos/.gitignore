@@ -1,0 +1,5 @@
+/node_modules
+/build
+/.preview
+/libs/flutter.har
+oh-package-lock.json5

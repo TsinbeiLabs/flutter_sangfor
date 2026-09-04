@@ -1,3 +1,7 @@
+## 0.0.4
+
+* Lockstep release with `flutter_sangfor` 0.0.4.
+
 ## 0.0.3
 
 * Add `matchTcpRoute(..., includeL3Preferred)` and
