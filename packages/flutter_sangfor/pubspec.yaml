@@ -47,6 +47,9 @@ flutter:
         pluginClass: FlutterSangforPlugin
       windows:
         pluginClass: FlutterSangforPluginCApi
+      ohos:
+        package: com.tsinbei.flutter_sangfor
+        pluginClass: FlutterSangforPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
