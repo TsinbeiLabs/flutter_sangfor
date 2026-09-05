@@ -10,6 +10,10 @@ const SEND_FD_TIMEOUT_MS = 60000;
 const MIN_MTU = 576;
 const MAX_MTU = 1500;
 const DEFAULT_MTU = 1400;
+// connection.NetAddress.family is a plain number in the OHOS SDK (the
+// FamilyType enum only exists for DNS queries): 1 = IPv4, 2 = IPv6.
+const NET_FAMILY_IPV4 = 1;
+const NET_FAMILY_IPV6 = 2;
 
 /// VpnExtensionAbility base that establishes the system VPN and hands the
 /// TUN descriptor to the app process. Declare a trivial subclass of this in
@@ -88,14 +92,14 @@ export class SangforVpnExtAbility extends VpnExtensionAbility {
       dnsAddresses: config.dnsServers,
       searchDomains: config.searchDomains,
       mtu: mtu,
-      isIPv4Accepted: family === connection.NetFamily.IPV4,
-      isIPv6Accepted: family === connection.NetFamily.IPV6,
+      isIPv4Accepted: family === NET_FAMILY_IPV4,
+      isIPv6Accepted: family === NET_FAMILY_IPV6,
       blockedApplications: config.blockedApplications,
     };
   }
 
-  private static netFamilyFor(address: string): connection.NetFamily {
-    return address.indexOf(':') >= 0 ? connection.NetFamily.IPV6 : connection.NetFamily.IPV4;
+  private static netFamilyFor(address: string): number {
+    return address.indexOf(':') >= 0 ? NET_FAMILY_IPV6 : NET_FAMILY_IPV4;
   }
 
   private static parseRoute(route: string): connection.RouteInfo | null {
@@ -108,13 +112,20 @@ export class SangforVpnExtAbility extends VpnExtensionAbility {
     if (Number.isNaN(prefixLength)) {
       return null;
     }
+    const family = SangforVpnExtAbility.netFamilyFor(address);
     const destination: connection.LinkAddress = {
-      address: { address: address, family: SangforVpnExtAbility.netFamilyFor(address) },
+      address: { address: address, family: family },
       prefixLength: prefixLength,
     };
     return {
       interface: 'vpn-tun',
       destination: destination,
+      // RouteInfo.gateway is mandatory in the SDK type even when
+      // hasGateway is false; supply the unspecified address.
+      gateway: {
+        address: family === NET_FAMILY_IPV6 ? '::' : '0.0.0.0',
+        family: family,
+      },
       hasGateway: false,
       isDefaultRoute: route === '0.0.0.0/0' || route === '::/0',
     };

@@ -6,7 +6,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@ohos/flutter_ohos": "file:libs/flutter.har",
+    "@ohos/flutter_ohos": "file:./har/flutter.har",
     "libflutter_sangfor.so": "file:./src/main/cpp/types/libflutter_sangfor"
   }
 }

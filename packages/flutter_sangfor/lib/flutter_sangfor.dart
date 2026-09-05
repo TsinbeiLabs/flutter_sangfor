@@ -19,8 +19,8 @@ export 'src/tun_device.dart';
 export 'src/fd_packet_device.dart';
 export 'src/utun_device.dart';
 export 'src/android_vpn.dart';
-export 'src/ios_vpn.dart';
 export 'src/ohos_vpn.dart';
+export 'src/ios_vpn.dart';
 
 /// Controls an aTrust-compatible VPN session.
 class FlutterSangfor {

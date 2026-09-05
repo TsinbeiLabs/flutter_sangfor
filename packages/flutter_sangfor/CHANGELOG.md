@@ -1,13 +1,13 @@
+## 0.0.5
+
+* Fix the ohos ArkTS build: NetAddress.family is a plain number in the
+  OpenHarmony SDK (no connection.NetFamily enum), RouteInfo.gateway is
+  mandatory, and Index.ets imports must precede exports.
+
 ## 0.0.4
 
-* Add `OhosVpnDevice`, the HarmonyOS NEXT / OpenHarmony system VPN adapter:
-  a `VpnExtensionAbility` establishes the TUN interface in its own process
-  and hands the descriptor to the app process over an AF_UNIX socket
-  (`SCM_RIGHTS`), where the packet loops read and write it directly through
-  FFI — the same shape as the Android `VpnService` adapter.
-* Ship the `ohos` plugin platform (ArkTS plugin + NAPI fd hand-off) and host
-  integration templates under `ohos/templates/`.
-
+* Add the HarmonyOS VpnExtensionAbility adapter (ohos module, SCM_RIGHTS
+  TUN fd hand-off) and the OhosVpnDevice Dart adapter.
 ## 0.0.3
 
 * Fix an Android ANR: establish the tunnel from a background executor instead

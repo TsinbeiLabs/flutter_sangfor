@@ -1,30 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'fd_packet_device.dart';
 import 'tunnel_io.dart';
 
-/// HarmonyOS NEXT / OpenHarmony system VPN adapter: starts the
-/// `SangforVpnExtAbility` (a `VpnExtensionAbility`) declared by the host
-/// app, receives the established TUN file descriptor, and surfaces it as a
-/// [SangforPacketDevice].
-///
-/// The VPN extension runs in its own process; the plugin transfers the
-/// descriptor to this process over an AF_UNIX socket (SCM_RIGHTS) before
-/// this method returns, so the read/write loops can run here directly
-/// through FFI — the same shape as [AndroidVpnDevice], where the app
-/// process owns the tunnel fd.
+/// HarmonyOS system VPN adapter: starts the host-declared
+/// `SangforVpnExtAbility` (a `VpnExtensionAbility`), receives the
+/// established TUN descriptor over the SCM_RIGHTS hand-off socket, and
+/// surfaces it as a [SangforPacketDevice]. Mirrors [AndroidVpnDevice].
 class OhosVpnDevice implements SangforPacketDevice {
   OhosVpnDevice._(this._device);
 
   static const MethodChannel _channel = MethodChannel('flutter_sangfor');
 
   final FdPacketDevice _device;
-
-  static bool get _isOhos => !kIsWeb && Platform.operatingSystem == 'ohos';
 
   @override
   Stream<Uint8List> get incoming => _device.incoming;
@@ -35,9 +26,8 @@ class OhosVpnDevice implements SangforPacketDevice {
   /// Starts the system VPN interface.
   ///
   /// [routes] entries use the `<address>/<prefix>` notation, for example
-  /// `10.0.0.0/8`; the system applies them to the `vpn-tun` interface.
-  /// Throws a [StateError] when the user declines the VPN authorization
-  /// dialog or the extension does not come up.
+  /// `10.0.0.0/8`. Returns null when the user did not authorize the VPN
+  /// extension or the descriptor hand-off timed out.
   static Future<OhosVpnDevice?> start({
     required String address,
     required int prefixLength,
@@ -45,41 +35,47 @@ class OhosVpnDevice implements SangforPacketDevice {
     List<String> dnsServers = const <String>[],
     List<String> searchDomains = const <String>[],
     int mtu = 0,
+    List<String> blockedApplications = const <String>[],
   }) async {
-    if (!_isOhos) {
-      throw UnsupportedError('OhosVpnDevice requires OpenHarmony');
+    if (Platform.operatingSystem != 'ohos') {
+      throw UnsupportedError('OhosVpnDevice requires HarmonyOS');
     }
-    final fd = await _channel.invokeMethod<int>('vpnStart', <String, Object?>{
-      'address': address,
-      'prefixLength': prefixLength,
-      'routes': routes,
-      'dnsServers': dnsServers,
-      'searchDomains': searchDomains,
-      'mtu': mtu,
-    });
+    final int? fd;
+    try {
+      fd = await _channel.invokeMethod<int>('vpnStart', <String, Object?>{
+        'address': address,
+        'prefixLength': prefixLength,
+        'routes': routes,
+        'dnsServers': dnsServers,
+        'searchDomains': searchDomains,
+        'mtu': mtu,
+        'blockedApplications': blockedApplications,
+      });
+    } on PlatformException {
+      // Authorization denied, extension failed, or hand-off timed out.
+      return null;
+    }
     if (fd == null || fd < 0) {
-      throw StateError('VpnConnection.create returned no descriptor');
+      return null;
     }
     final device = await FdPacketDevice.fromFd(fd);
     return OhosVpnDevice._(device);
   }
 
-  /// Whether the VPN permission has been granted. OpenHarmony has no
-  /// pre-grant step — the system shows the authorization dialog when the
-  /// VPN extension starts for the first time — so this only reports
-  /// platform support.
+  /// Whether the VPN permission has been granted to this app. On HarmonyOS
+  /// the system prompts when the extension starts for the first time, so
+  /// there is no separate pre-grant step.
   static Future<bool> get isPrepared async {
-    if (!_isOhos) return false;
+    if (Platform.operatingSystem != 'ohos') return false;
     final prepared = await _channel.invokeMethod<bool>('vpnPrepare');
-    return prepared ?? true;
+    return prepared ?? false;
   }
 
-  /// Requests the system VPN permission. The authorization dialog appears
-  /// as part of the first [start], so this is a no-op that reports platform
-  /// support.
+  /// Requests the system VPN permission. On HarmonyOS this is a no-op that
+  /// always succeeds (see [isPrepared]).
   static Future<bool> requestPermission() async {
-    if (!_isOhos) return false;
-    return await _channel.invokeMethod<bool>('vpnRequestPermission') ?? true;
+    if (Platform.operatingSystem != 'ohos') return false;
+    return await _channel.invokeMethod<bool>('vpnRequestPermission') ?? false;
   }
 
   @override

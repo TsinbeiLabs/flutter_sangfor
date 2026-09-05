@@ -1,6 +1,6 @@
 name: flutter_sangfor
 description: "Flutter integration for Sangfor aTrust and Easy Connect VPNs with an independently implemented protocol core"
-version: 0.0.4
+version: 0.0.5
 repository: https://github.com/TsinbeiLabs/flutter_sangfor
 issue_tracker: https://github.com/TsinbeiLabs/flutter_sangfor/issues
 
@@ -45,11 +45,11 @@ flutter:
         pluginClass: FlutterSangforPlugin
       macos:
         pluginClass: FlutterSangforPlugin
+      windows:
+        pluginClass: FlutterSangforPluginCApi
       ohos:
         package: com.tsinbei.flutter_sangfor
         pluginClass: FlutterSangforPlugin
-      windows:
-        pluginClass: FlutterSangforPluginCApi
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
