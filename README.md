@@ -15,6 +15,9 @@ The product packages depend on the root package and never on each other.
 
 ## Documentation
 
+- [Rust data plane](docs/rust-core.md) - one protocol implementation behind a C
+  ABI, for the platforms whose tunnel lives outside the app process.
+
 - [Architecture](docs/architecture.md)
 - [Protocol evidence](docs/protocol-evidence.md)
 - [Tasks](tasks/todo)

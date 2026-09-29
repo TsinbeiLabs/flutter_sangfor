@@ -1,0 +1,19 @@
+[package]
+name = "sangfor-ffi"
+description = "C ABI for sangfor-core: one surface for the iOS extension, Android service, and desktop daemons."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "sangfor_ffi"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[dependencies]
+sangfor-core = { path = "../sangfor-core" }
+sangfor-tun = { path = "../sangfor-tun" }

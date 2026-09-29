@@ -105,6 +105,29 @@
       against an authorized deployment (memory budget, background survival,
       reconnects).
 
+## 4b. Rust data plane (docs/rust-core.md)
+
+- [x] 4b-a sangfor-core: canonical JSON, SHA-256/HMAC, salted certificate
+      digest, L3 frames/handshake/VIP, flow-auth signing, TCP-tunnel dial
+      protocol, IPv4/TCP codec, route table, flow tracker. Verified by 15
+      golden tests against the fixtures the Dart reference emits.
+- [x] 4b-b sangfor-core: userspace TCP terminator (effect-based, no I/O) and
+      the data-plane orchestration (node dial/handshake, per-flow auth with
+      deadlines and retries, heartbeats, reconnect, ingress fan-out).
+      18 + 11 tests, including the cumulative-ACK regression that the Swift
+      port caught in the Dart implementation.
+- [x] 4b-c sangfor-ffi: the C ABI (sangfor.h), one runtime thread, effect
+      dispatch after the lock is released so a host can call back in. Driven
+      end-to-end by 3 ABI tests.
+- [x] 4b-d CI: fmt, clippy -D warnings, cargo test, and a cross-compile check
+      for musl + android, so the "no C toolchain" property stays true.
+- [ ] 4b-e sangfor-tun: wintun, /dev/net/tun, and the Android/OHOS fd device.
+- [ ] 4b-f Hosts: the iOS .appex shim (replace the Swift Native/ core with the
+      ABI), the Windows daemon, the Android :vpn process, the OHOS extension
+      ability, and the Dart FFI bindings behind a flag.
+- [ ] 4b-g Delete the Dart and Swift data planes once every platform is
+      verified against an authorized deployment.
+
 ## 5. Hardening and release
 
 - [x] 5a Cancellation propagation: `SangforTunnelRouter` and

@@ -59,6 +59,7 @@ part of this project.
 - [x] Product-neutral SOCKS5 frontend (RFC 1928 no-auth CONNECT) and `dialTcp` on both connectors
 - [x] Userspace TCP termination for raw-IP planes (RFC 793 server role: checksums, MSS clamp, retransmit, window flow control)
 - [x] System-wide HTTP proxy adapters: WinINET (Windows), networksetup (macOS), NEProxySettings (iOS)
+- [x] Rust data plane core (ust/sangfor-core, ust/sangfor-ffi): one implementation of the protocol, codec, conntrack, terminator, and orchestration behind a C ABI, cross-compiling to Windows/Linux/Android/OHOS with no C toolchain; verified against the same golden fixtures as the Swift core
 - [x] Extension-native iOS data plane: the packet tunnel extension runs the tunnel itself (pure-Swift protocol core, cross-checked against Dart golden fixtures) so the VPN outlives the Runner
 - [x] Windows Wintun adapter (official signed DLL, FFI) and Linux TUN adapter (FFI ioctl)
 - [x] Android `VpnService` adapter (foreground service + Dart FFI fd)

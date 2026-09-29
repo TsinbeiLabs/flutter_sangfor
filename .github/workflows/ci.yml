@@ -41,6 +41,35 @@ jobs:
       - name: Test
         run: flutter test
 
+  rust-core:
+    name: rust data plane (sangfor-core, sangfor-ffi)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # The golden tests decode the fixtures the Dart reference implementation
+      # generates, so a protocol change on either side fails here rather than
+      # in production.
+      - name: Test
+        run: cargo test --workspace
+      - name: Cross-compile the core (no C toolchain required)
+        run: |
+          rustup target add aarch64-linux-android x86_64-unknown-linux-musl
+          cargo build -p sangfor-core --release --target x86_64-unknown-linux-musl
+          cargo build -p sangfor-core --release --target aarch64-linux-android
+
   swift-core:
     name: native swift core (packet tunnel data plane)
     runs-on: ubuntu-latest
@@ -78,7 +107,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
-    needs: [packages, windows, swift-core]
+    needs: [packages, windows, swift-core, rust-core]
     permissions:
       id-token: write
       contents: read

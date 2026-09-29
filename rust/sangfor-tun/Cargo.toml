@@ -1,0 +1,18 @@
+[package]
+name = "sangfor-tun"
+description = "Platform TUN devices for sangfor-core: wintun, /dev/net/tun, and handed-over file descriptors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sangfor-core = { path = "../sangfor-core" }
+
+[features]
+default = []
+# Platform devices are opt-in so the core stays buildable everywhere.
+wintun = []
+tun = []
+fd = []
