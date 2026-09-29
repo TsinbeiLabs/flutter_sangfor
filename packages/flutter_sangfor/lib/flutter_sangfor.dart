@@ -14,6 +14,8 @@ export 'src/events.dart';
 export 'src/tunnel_io.dart';
 export 'src/socket_tcp_stream.dart';
 export 'src/socks5.dart';
+export 'src/system_proxy.dart';
+export 'src/tcp_terminator.dart';
 export 'src/wintun.dart';
 export 'src/tun_device.dart';
 export 'src/fd_packet_device.dart';

@@ -42,6 +42,14 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
   public var routes: [String]
   public var dnsServers: [String]
   public var searchDomains: [String]
+  /// Host of a loopback HTTP proxy advertised system-wide through
+  /// `NEProxySettings` while the tunnel is up. Resources published as
+  /// TCP-tunnel-only cannot be forwarded as raw IP, so proxy-honoring
+  /// clients must be pointed at the caller's proxy instead of the packet
+  /// flow. Empty/nil keeps the tunnel proxy-free.
+  public var proxyHost: String?
+  /// Port of [proxyHost]; ignored unless the port is in 1...65535.
+  public var proxyPort: Int?
   public var mtu: Int?
   public var runtimeMode: SangforRuntimeMode
 
@@ -52,6 +60,8 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
     routes: [String] = [],
     dnsServers: [String] = [],
     searchDomains: [String] = [],
+    proxyHost: String? = nil,
+    proxyPort: Int? = nil,
     mtu: Int? = nil,
     runtimeMode: SangforRuntimeMode = .loopbackBridge
   ) {
@@ -61,8 +71,23 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
     self.routes = routes
     self.dnsServers = dnsServers
     self.searchDomains = searchDomains
+    self.proxyHost = proxyHost
+    self.proxyPort = proxyPort
     self.mtu = mtu
     self.runtimeMode = runtimeMode
+  }
+
+  /// The proxy endpoint when both halves are present and the port is usable.
+  /// Callers must treat `nil` as "no system proxy" and never fall back to a
+  /// default port.
+  public var proxyEndpoint: (host: String, port: Int)? {
+    guard
+      let host = proxyHost?.trimmingCharacters(in: .whitespaces),
+      !host.isEmpty,
+      let port = proxyPort,
+      (1...65_535).contains(port)
+    else { return nil }
+    return (host, port)
   }
 
   /// Encodes the configuration as JSON data.

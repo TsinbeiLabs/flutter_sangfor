@@ -94,4 +94,64 @@ void main() {
       completes,
     );
   });
+
+  group('vpnStart arguments', () {
+    test('advertise the loopback proxy when a port is given', () {
+      final args = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        routes: const ['202.114.64.0/24'],
+        dnsServers: const ['202.114.64.7'],
+        proxyPort: 41237,
+      );
+      expect(args['proxyHost'], '127.0.0.1');
+      expect(args['proxyPort'], 41237);
+      expect(args['routes'], ['202.114.64.0/24']);
+      expect(args['dnsServers'], ['202.114.64.7']);
+    });
+
+    test('honor an explicit proxy host', () {
+      final args = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        proxyHost: '127.0.0.2',
+        proxyPort: 8080,
+      );
+      expect(args['proxyHost'], '127.0.0.2');
+      expect(args['proxyPort'], 8080);
+    });
+
+    test('omit the proxy for a zero, negative, or oversized port', () {
+      for (final port in [0, -1, 65536]) {
+        final args = IosVpnDevice.startArguments(
+          address: '10.0.0.42',
+          prefixLength: 32,
+          proxyPort: port,
+        );
+        expect(args['proxyHost'], '', reason: 'port $port');
+        expect(args['proxyPort'], 0, reason: 'port $port');
+      }
+    });
+
+    test('omit the proxy for a blank host', () {
+      final args = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        proxyHost: '   ',
+        proxyPort: 8080,
+      );
+      expect(args['proxyHost'], '');
+      expect(args['proxyPort'], 0);
+    });
+
+    test('trim the proxy host', () {
+      final args = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        proxyHost: ' 127.0.0.1 ',
+        proxyPort: 8080,
+      );
+      expect(args['proxyHost'], '127.0.0.1');
+    });
+  });
 }

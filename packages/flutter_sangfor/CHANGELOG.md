@@ -1,3 +1,19 @@
+## 0.0.6
+
+* Add the userspace TCP terminator (`SangforTcpTerminator`,
+  `SangforTerminatingTunnel`): a packet device can now serve TCP flows the
+  tunnel refuses to forward as raw IP by completing the handshake locally and
+  relaying bytes through a `SangforTcpDialer`. Ships an IPv4/TCP codec with
+  full checksums, MSS clamping, retransmission with exponential backoff, peer
+  window flow control, and upstream backpressure.
+* Add `SangforSystemProxy`, which publishes a loopback HTTP proxy as the
+  OS-wide proxy on Windows (WinINET keys under `HKCU`, no elevation needed) and
+  macOS (`networksetup`, administrator rights), capturing and restoring
+  whatever the user had configured before.
+* Advertise a system proxy from the iOS packet tunnel:
+  `IosVpnDevice.start(proxyHost:, proxyPort:)` now reaches `NEProxySettings`
+  with an all-hosts match domain, the counterpart of Android's
+  `VpnService.Builder.setHttpProxy`.
 ## 0.0.5
 
 * Fix the ohos ArkTS build: NetAddress.family is a plain number in the

@@ -75,7 +75,7 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   ) {
     let configuration = Self.configuration(from: options ?? [:])
     SangforLog.provider(
-      "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0)"
+      "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0) proxy=\(configuration.proxyEndpoint.map { "\($0.host):\($0.port)" } ?? "none")"
     )
 
     // Fail closed: a malformed route is logged and skipped, never silently
@@ -128,6 +128,25 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         ? nil
         : configuration.searchDomains
       settings.dnsSettings = dns
+    }
+    if let proxy = configuration.proxyEndpoint {
+      // Advertise the caller's loopback HTTP proxy as the system proxy for
+      // the tunnel's lifetime. Gateways commonly publish resources as
+      // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
+      // clients (CFNetwork/NSURLSession) then reach them through the caller's
+      // proxy instead of being dropped as unrouted. An empty match-domain
+      // matches every host name, so all HTTP(S) traffic is proxied.
+      let proxySettings = NEProxySettings()
+      let server = NEProxyServer(address: proxy.host, port: proxy.port)
+      proxySettings.httpEnabled = true
+      proxySettings.httpServer = server
+      proxySettings.httpsEnabled = true
+      proxySettings.httpsServer = server
+      proxySettings.matchDomains = [""]
+      settings.proxySettings = proxySettings
+      SangforLog.network(
+        "system proxy advertised at \(proxy.host):\(proxy.port)"
+      )
     }
     if let mtu = configuration.mtu, mtu > 0 {
       settings.mtu = mtu as NSNumber
@@ -212,6 +231,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       routes: (options["routes"] as? [String]) ?? [],
       dnsServers: (options["dnsServers"] as? [String]) ?? [],
       searchDomains: (options["searchDomains"] as? [String]) ?? [],
+      proxyHost: options["proxyHost"] as? String,
+      proxyPort: (options["proxyPort"] as? Int).flatMap { $0 > 0 ? $0 : nil },
       mtu: (options["mtu"] as? Int).flatMap { $0 > 0 ? $0 : nil }
     )
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'tunnel_io.dart';
@@ -97,6 +98,14 @@ class IosVpnDevice implements SangforPacketDevice {
   /// [address], [prefixLength], [routes], [dnsServers], [searchDomains],
   /// and [mtu] configure the tunnel network settings.
   ///
+  /// [proxyHost]/[proxyPort] advertise a loopback HTTP proxy as the
+  /// system-wide proxy (via `NEProxySettings`) for as long as the tunnel is
+  /// up. Gateways publish many resources as TCP-tunnel-only, which the raw
+  /// packet flow cannot forward; pointing proxy-aware clients at the caller's
+  /// HTTP proxy is what makes those resources reachable in system mode, the
+  /// same trick `AndroidVpnDevice.start`'s `proxyPort` plays on Android.
+  /// Leave [proxyPort] at 0 to keep the tunnel proxy-free.
+  ///
   /// [providerBundleIdentifier] identifies the consumer's packet tunnel
   /// `.appex` target; resolution order is this argument, then the Runner
   /// Info.plist key `SangforPacketTunnelBundleIdentifier`, then the legacy
@@ -111,6 +120,8 @@ class IosVpnDevice implements SangforPacketDevice {
     List<String> dnsServers = const <String>[],
     List<String> searchDomains = const <String>[],
     int mtu = 0,
+    String proxyHost = '127.0.0.1',
+    int proxyPort = 0,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
     String localizedDescription = 'flutter_sangfor',
@@ -118,18 +129,22 @@ class IosVpnDevice implements SangforPacketDevice {
     if (!Platform.isIOS) {
       throw UnsupportedError('IosVpnDevice requires iOS');
     }
-    final started =
-        await _channel.invokeMethod<bool>('vpnStart', <String, Object?>{
-      'address': address,
-      'prefixLength': prefixLength,
-      'routes': routes,
-      'dnsServers': dnsServers,
-      'searchDomains': searchDomains,
-      'mtu': mtu,
-      'providerBundleIdentifier': providerBundleIdentifier,
-      'appGroupIdentifier': appGroupIdentifier,
-      'localizedDescription': localizedDescription,
-    });
+    final started = await _channel.invokeMethod<bool>(
+      'vpnStart',
+      startArguments(
+        address: address,
+        prefixLength: prefixLength,
+        routes: routes,
+        dnsServers: dnsServers,
+        searchDomains: searchDomains,
+        mtu: mtu,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+        providerBundleIdentifier: providerBundleIdentifier,
+        appGroupIdentifier: appGroupIdentifier,
+        localizedDescription: localizedDescription,
+      ),
+    );
     if (started != true) {
       throw StateError('Failed to start the iOS VPN tunnel');
     }
@@ -150,6 +165,40 @@ class IosVpnDevice implements SangforPacketDevice {
       }
     }
     throw StateError('Failed to connect to the NE IPC socket: $lastError');
+  }
+
+  /// Builds the `vpnStart` argument map. A non-positive [proxyPort] or an
+  /// empty [proxyHost] omits the proxy entirely so the native side never
+  /// advertises a half-configured system proxy.
+  @visibleForTesting
+  static Map<String, Object?> startArguments({
+    required String address,
+    required int prefixLength,
+    List<String> routes = const <String>[],
+    List<String> dnsServers = const <String>[],
+    List<String> searchDomains = const <String>[],
+    int mtu = 0,
+    String proxyHost = '127.0.0.1',
+    int proxyPort = 0,
+    String? providerBundleIdentifier,
+    String? appGroupIdentifier,
+    String localizedDescription = 'flutter_sangfor',
+  }) {
+    final advertiseProxy =
+        proxyHost.trim().isNotEmpty && proxyPort > 0 && proxyPort <= 65535;
+    return <String, Object?>{
+      'address': address,
+      'prefixLength': prefixLength,
+      'routes': routes,
+      'dnsServers': dnsServers,
+      'searchDomains': searchDomains,
+      'mtu': mtu,
+      'proxyHost': advertiseProxy ? proxyHost.trim() : '',
+      'proxyPort': advertiseProxy ? proxyPort : 0,
+      'providerBundleIdentifier': providerBundleIdentifier,
+      'appGroupIdentifier': appGroupIdentifier,
+      'localizedDescription': localizedDescription,
+    };
   }
 
   static IosVpnDevice _create(Socket socket) {

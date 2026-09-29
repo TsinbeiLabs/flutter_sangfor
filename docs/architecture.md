@@ -57,6 +57,8 @@ part of this project.
 - [x] Userspace TCP/UDP synthesis over the Easy Connect L3 plane (RFC 793/768 client role)
 - [x] Tunnel DNS resolver for the Easy Connect userspace plane (RFC 1035)
 - [x] Product-neutral SOCKS5 frontend (RFC 1928 no-auth CONNECT) and `dialTcp` on both connectors
+- [x] Userspace TCP termination for raw-IP planes (RFC 793 server role: checksums, MSS clamp, retransmit, window flow control)
+- [x] System-wide HTTP proxy adapters: WinINET (Windows), networksetup (macOS), NEProxySettings (iOS)
 - [x] Windows Wintun adapter (official signed DLL, FFI) and Linux TUN adapter (FFI ioctl)
 - [x] Android `VpnService` adapter (foreground service + Dart FFI fd)
 - [x] Dry-run connectors without network I/O

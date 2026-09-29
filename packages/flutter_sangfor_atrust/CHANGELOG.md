@@ -1,3 +1,10 @@
+## 0.0.6
+
+* Add `ATrustTcpTermination` and `ATrustPacketTunnel`: TCP flows the gateway
+  publishes for the TCP tunnel only (`enableTCPPrefL3` false) are terminated
+  locally and relayed through `ATrustTunnel.dialTcp` instead of being dropped
+  as unrouted. That drop is what turned system mode into a black hole on every
+  platform without a system proxy.
 ## 0.0.5
 
 * Lockstep release with `flutter_sangfor` 0.0.5.

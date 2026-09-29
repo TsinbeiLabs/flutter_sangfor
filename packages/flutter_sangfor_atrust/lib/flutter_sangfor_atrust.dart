@@ -27,6 +27,7 @@ export 'src/node_selection.dart';
 export 'src/l3_connection.dart';
 export 'src/atrust_tunnel.dart';
 export 'src/tcp_tunnel_client.dart';
+export 'src/tcp_termination.dart';
 
 import 'src/atrust_tunnel.dart';
 import 'src/login_session.dart';

@@ -74,6 +74,25 @@
       socket, CTLIOCGID ioctl, sockaddr_ctl connect, 4-byte protocol-family
       header strip/prepend in FdPacketDevice). Code untested: requires
       macOS + root to verify against a real utun interface.
+- [x] 4f Implement the userspace TCP terminator (`SangforTcpTerminator`,
+      `SangforTerminatingTunnel`, IPv4/TCP codec with full checksums): a packet
+      device can serve TCP flows the gateway refuses to forward as raw IP by
+      completing the handshake locally and relaying bytes through a
+      `SangforTcpDialer`. RFC 793 server role, MSS clamping, retransmit with
+      exponential backoff, peer-window flow control, upstream backpressure,
+      FIN/RST handling. No window scaling, SACK, or timestamps by design.
+- [x] 4g Implement the system-wide HTTP proxy adapters: `SangforSystemProxy`
+      (WinINET keys under HKCU on Windows, `networksetup` on macOS, previous
+      configuration captured and restored, privilege refusals reported) and
+      `NEProxySettings` on the iOS packet tunnel, mirroring Android's
+      `VpnService.Builder.setHttpProxy`.
+- [x] 4h aTrust: `ATrustTcpTermination` decides which flows the L3 plane
+      refuses (`matchL3Route` vs `matchTcpRoute`) and relays them through
+      `ATrustTunnel.dialTcp`, with a reverse host map so domain-published
+      resources keep their identity.
+- [ ] 4f-verify Run the terminator and the desktop system proxies against a
+      real gateway and a real TUN interface (needs elevation + an authorized
+      deployment).
 
 ## 5. Hardening and release
 

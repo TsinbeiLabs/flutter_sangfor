@@ -204,6 +204,10 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       "routes": (args["routes"] as? [String] ?? []) as NSArray,
       "dnsServers": (args["dnsServers"] as? [String] ?? []) as NSArray,
       "searchDomains": (args["searchDomains"] as? [String] ?? []) as NSArray,
+      // Optional loopback HTTP proxy advertised system-wide by the provider
+      // (see SangforPacketTunnelProvider). Omitted keys mean "no proxy".
+      "proxyHost": (args["proxyHost"] as? String ?? "") as NSString,
+      "proxyPort": (args["proxyPort"] as? Int ?? 0) as NSNumber,
       "mtu": (args["mtu"] as? Int ?? 0) as NSNumber,
     ]
     manager.start(options: options) { error in
