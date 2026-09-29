@@ -1,3 +1,10 @@
+## 0.0.8
+
+* Keep the extension-native tunnel alive across a restart: the session plan is
+  written with "complete until first user authentication" protection (iOS may
+  bring the tunnel back after a reboot or a network change with the device
+  still locked) and is only wiped on a user-initiated, provider-disabled, or
+  app-update stop instead of every stop.
 ## 0.0.7
 
 * Add the iOS extension-native data plane: `IosVpnRuntimeMode.extensionNative`,

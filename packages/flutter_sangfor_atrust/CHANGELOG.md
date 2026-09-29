@@ -1,3 +1,7 @@
+## 0.0.8
+
+* Lockstep release with `flutter_sangfor` 0.0.8.
+
 ## 0.0.7
 
 * Add `ATrustTunnel.plan()` and `ATrustTunnel.buildSessionPlan()`: resolve the

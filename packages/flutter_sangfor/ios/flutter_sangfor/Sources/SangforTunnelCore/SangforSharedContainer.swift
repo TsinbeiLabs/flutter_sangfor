@@ -77,7 +77,10 @@ public enum SangforSharedContainer {
   ///
   /// The plan carries the tunnel signing key, so it lives in the App Group
   /// container (which the OS restricts to the two processes that declare the
-  /// group) and must never be logged.
+  /// group) and must never be logged. Protection is
+  /// "until first user authentication" rather than "complete": iOS may restart
+  /// a packet tunnel after a reboot or a network change, and the extension has
+  /// to be able to read the plan without the device being unlocked again.
   public static func writeSessionPlan(
     _ data: Data,
     appGroupIdentifier: String?
@@ -87,7 +90,10 @@ public enum SangforSharedContainer {
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    try data.write(to: url, options: [.atomic, .completeFileProtection])
+    try data.write(
+      to: url,
+      options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+    )
   }
 
   /// Reads the session plan written by [writeSessionPlan], if any.

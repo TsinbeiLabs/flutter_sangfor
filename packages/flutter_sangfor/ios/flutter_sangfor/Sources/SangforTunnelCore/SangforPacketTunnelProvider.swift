@@ -252,11 +252,18 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     bridge = nil
     nativeRuntime?.stop()
     nativeRuntime = nil
-    // The plan carries the tunnel signing key: never leave it behind for a
-    // later session to pick up.
-    SangforSharedContainer.removeSessionPlan(
-      appGroupIdentifier: resolvedAppGroupIdentifier(options: [:])
-    )
+    // The plan carries the tunnel signing key. Wipe it when the tunnel is
+    // really going away, but keep it across a transient stop: iOS restarts the
+    // provider after a network change or a reboot, and the extension has to
+    // come back up on its own — the Runner may not be running at all.
+    switch reason {
+    case .userInitiated, .providerDisabled, .appUpdate:
+      SangforSharedContainer.removeSessionPlan(
+        appGroupIdentifier: resolvedAppGroupIdentifier(options: [:])
+      )
+    default:
+      SangforLog.provider("keeping the session plan for a tunnel restart")
+    }
     completionHandler()
   }
 
