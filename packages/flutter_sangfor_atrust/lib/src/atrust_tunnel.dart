@@ -7,6 +7,7 @@ import 'l3_connection.dart';
 import 'node_selection.dart';
 import 'packet.dart';
 import 'resource.dart';
+import 'session_plan.dart';
 import 'tcp_tunnel.dart';
 import 'tcp_tunnel_client.dart';
 import 'tunnel.dart';
@@ -110,6 +111,26 @@ class ATrustTunnel {
     return address;
   }
 
+  /// Resolves the node topology and the client virtual IP **without** opening
+  /// the persistent L3 connection, for callers that hand the data plane to
+  /// another process (the iOS packet tunnel extension).
+  ///
+  /// Two live tunnel connections for one session make the gateway drop one, so
+  /// a caller that plans must not also [start] the same tunnel.
+  Future<ATrustTunnelPlan> plan() async {
+    if (_closed) throw StateError('tunnel is closed');
+    _bestNodes ??= await ATrustNodeSelector().select(
+      resource.nodeGroups,
+      dialer: _nodeDialer,
+    );
+    final address = await _queryVirtualAddress();
+    _virtualAddress = address;
+    return ATrustTunnelPlan(
+      bestNodes: Map<String, String>.of(_bestNodes!),
+      virtualAddress: address,
+    );
+  }
+
   /// Routes one IP packet to the node group that owns the destination.
   /// Returns false when no L3 route matches the packet.
   Future<bool> sendPacket(Uint8List packet) async {
@@ -130,6 +151,56 @@ class ATrustTunnel {
       nodeGroupId: route.nodeGroupId,
     );
     return true;
+  }
+
+  /// Builds the hand-off document for an out-of-process data plane (the iOS
+  /// packet tunnel extension).
+  ///
+  /// Call [plan] first: the node choice and the virtual IP have to be resolved
+  /// by a process that can still talk to the gateway, because the extension
+  /// cannot log in.
+  ///
+  /// [dialHosts] maps resolved IPv4 addresses back to the host names the
+  /// gateway published, so the extension can dial domain-published resources
+  /// by name; [certificateDigests] carries the anti-MITM pins to verify node
+  /// certificates against.
+  ATrustSessionPlan buildSessionPlan({
+    Map<String, String> dialHosts = const <String, String>{},
+    List<String> certificateDigests = const <String>[],
+    bool acceptAnyCertificate = true,
+    String? processPlatform,
+    int mtu = 1400,
+    double heartbeatSeconds = 5,
+  }) {
+    final nodes = _bestNodes;
+    if (nodes == null || nodes.isEmpty) {
+      throw StateError(
+        'resolve the node topology with plan() before building a session plan',
+      );
+    }
+    return ATrustSessionPlan(
+      sid: _info.sid,
+      deviceId: _info.deviceId,
+      connectionId: _info.connectionId,
+      username: _info.username,
+      signKey: _signKey,
+      lang: _info.lang,
+      processName: _info.processName,
+      processPath: _info.processPath,
+      processPlatform: processPlatform ?? atrustPlatformName(),
+      nodes: <String, List<String>>{
+        for (final entry in nodes.entries) entry.key: <String>[entry.value],
+      },
+      majorNodeGroup: resource.majorNodeGroup,
+      routes: resource.routes,
+      dnsServers: resource.dnsServers,
+      virtualAddress: _virtualAddress,
+      certificateDigests: certificateDigests,
+      acceptAnyCertificate: acceptAnyCertificate,
+      dialHosts: dialHosts,
+      heartbeatSeconds: heartbeatSeconds,
+      mtu: mtu,
+    );
   }
 
   /// Dials a single TCP connection through the SOCKS5-like tunnel.

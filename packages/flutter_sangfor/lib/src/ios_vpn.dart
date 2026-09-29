@@ -21,6 +21,29 @@ enum IosVpnStatus {
       IosVpnStatus.invalid;
 }
 
+/// Where the tunnel data plane runs.
+enum IosVpnRuntimeMode {
+  /// Packets are forwarded to the Runner over a loopback socket and the Dart
+  /// side drives the tunnel. Simple, but the VPN dies when iOS suspends the
+  /// app, and the extension cancels the tunnel if the bridge stays away.
+  loopbackBridge,
+
+  /// The extension runs the tunnel itself from a session plan handed over
+  /// through the App Group container ([IosVpnDevice.writeSessionPlan]). The
+  /// app may be suspended or killed without interrupting traffic.
+  extensionNative;
+
+  /// The value the native side decodes into `SangforRuntimeMode`.
+  String get wireValue => name;
+
+  /// Parses a wire value, falling back to the bridge for unknown strings.
+  static IosVpnRuntimeMode fromWireValue(String? value) =>
+      IosVpnRuntimeMode.values.firstWhere(
+        (mode) => mode.name == value,
+        orElse: () => IosVpnRuntimeMode.loopbackBridge,
+      );
+}
+
 /// Incremental decoder for the 4-byte big-endian length-framed IPC stream
 /// shared with the packet tunnel extension. Accepts arbitrary TCP chunk
 /// boundaries; malformed frames (zero or oversized length) are skipped.
@@ -169,7 +192,8 @@ class IosVpnDevice implements SangforPacketDevice {
 
   /// Builds the `vpnStart` argument map. A non-positive [proxyPort] or an
   /// empty [proxyHost] omits the proxy entirely so the native side never
-  /// advertises a half-configured system proxy.
+  /// advertises a half-configured system proxy. [runtimeMode] decides whether
+  /// the extension forwards packets to the app or runs the tunnel itself.
   @visibleForTesting
   static Map<String, Object?> startArguments({
     required String address,
@@ -180,6 +204,7 @@ class IosVpnDevice implements SangforPacketDevice {
     int mtu = 0,
     String proxyHost = '127.0.0.1',
     int proxyPort = 0,
+    IosVpnRuntimeMode runtimeMode = IosVpnRuntimeMode.loopbackBridge,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
     String localizedDescription = 'flutter_sangfor',
@@ -195,6 +220,7 @@ class IosVpnDevice implements SangforPacketDevice {
       'mtu': mtu,
       'proxyHost': advertiseProxy ? proxyHost.trim() : '',
       'proxyPort': advertiseProxy ? proxyPort : 0,
+      'runtimeMode': runtimeMode.wireValue,
       'providerBundleIdentifier': providerBundleIdentifier,
       'appGroupIdentifier': appGroupIdentifier,
       'localizedDescription': localizedDescription,
@@ -220,6 +246,87 @@ class IosVpnDevice implements SangforPacketDevice {
       'appGroupIdentifier': appGroupIdentifier,
       'localizedDescription': localizedDescription,
     });
+  }
+
+  /// Starts the tunnel with the data plane **inside the extension**.
+  ///
+  /// No packet device comes back: the extension speaks the tunnel protocol
+  /// itself, using the session plan written by [writeSessionPlan] before this
+  /// call. Unlike [start], traffic therefore keeps flowing when iOS suspends
+  /// the app, and no loopback socket is involved.
+  static Future<void> startNative({
+    required String address,
+    required int prefixLength,
+    List<String> routes = const <String>[],
+    List<String> dnsServers = const <String>[],
+    List<String> searchDomains = const <String>[],
+    int mtu = 0,
+    String? providerBundleIdentifier,
+    String? appGroupIdentifier,
+    String localizedDescription = 'flutter_sangfor',
+  }) async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError('IosVpnDevice requires iOS');
+    }
+    final started = await _channel.invokeMethod<bool>(
+      'vpnStart',
+      startArguments(
+        address: address,
+        prefixLength: prefixLength,
+        routes: routes,
+        dnsServers: dnsServers,
+        searchDomains: searchDomains,
+        mtu: mtu,
+        runtimeMode: IosVpnRuntimeMode.extensionNative,
+        providerBundleIdentifier: providerBundleIdentifier,
+        appGroupIdentifier: appGroupIdentifier,
+        localizedDescription: localizedDescription,
+      ),
+    );
+    if (started != true) {
+      throw StateError('Failed to start the iOS VPN tunnel');
+    }
+  }
+
+  /// Hands the extension everything it needs to run the tunnel on its own:
+  /// the JSON document produced by the connector's session-plan encoder.
+  ///
+  /// The payload carries the tunnel signing key, so it is written into the App
+  /// Group container with file protection and removed again when the tunnel
+  /// stops. Never log it.
+  static Future<void> writeSessionPlan(
+    String planJson, {
+    String? appGroupIdentifier,
+  }) async {
+    if (!Platform.isIOS) return;
+    final written = await _channel.invokeMethod<bool>(
+      'vpnWriteSession',
+      <String, Object?>{
+        'plan': planJson,
+        'appGroupIdentifier': appGroupIdentifier,
+      },
+    );
+    if (written != true) {
+      throw StateError(
+        'Failed to store the VPN session plan; is the App Group '
+        '${appGroupIdentifier ?? '(default)'} configured for both targets?',
+      );
+    }
+  }
+
+  /// Removes a stored session plan. The extension also clears it on stop; this
+  /// covers a connect attempt that never got that far.
+  static Future<void> clearSessionPlan({String? appGroupIdentifier}) async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<bool>('vpnClearSession', <String, Object?>{
+      'appGroupIdentifier': appGroupIdentifier,
+    });
+  }
+
+  /// Stops the tunnel, however it was started.
+  static Future<void> stopTunnel() async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('vpnStop');
   }
 
   /// Whether a VPN configuration created by this package exists and is

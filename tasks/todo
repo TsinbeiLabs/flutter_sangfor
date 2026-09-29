@@ -93,6 +93,17 @@
 - [ ] 4f-verify Run the terminator and the desktop system proxies against a
       real gateway and a real TUN interface (needs elevation + an authorized
       deployment).
+- [x] 4i Extension-native iOS data plane: a pure-Swift aTrust core (SHA-256/
+      HMAC, Dart-identical canonical JSON, L3 + TCP-tunnel frame codecs,
+      IPv4/TCP builder with checksums, route table, userspace TCP terminator,
+      L3 connection driver, session-plan hand-off) plus the Apple glue
+      (NWConnection TLS with salted anti-MITM pins, packetFlow pump, provider
+      runtime-mode branch). `tool/run_swift_tests.sh` checks the pure half
+      against golden fixtures emitted by the Dart reference implementation, so
+      the two cannot drift; the Apple half still needs a Mac to build.
+- [ ] 4i-verify Build the .appex on a Mac and run the extension-native plane
+      against an authorized deployment (memory budget, background survival,
+      reconnects).
 
 ## 5. Hardening and release
 

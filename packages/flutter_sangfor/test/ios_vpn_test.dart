@@ -153,5 +153,57 @@ void main() {
       );
       expect(args['proxyHost'], '127.0.0.1');
     });
+    test('selects the extension data plane on request', () {
+      final bridge = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+      );
+      expect(bridge['runtimeMode'], 'loopbackBridge');
+
+      final native = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        runtimeMode: IosVpnRuntimeMode.extensionNative,
+      );
+      expect(native['runtimeMode'], 'extensionNative');
+      // The native plane terminates TCP flows itself, so it must not be handed
+      // a loopback proxy to advertise.
+      expect(native['proxyPort'], 0);
+    });
+
+    test('maps runtime mode wire values', () {
+      expect(
+        IosVpnRuntimeMode.fromWireValue('extensionNative'),
+        IosVpnRuntimeMode.extensionNative,
+      );
+      expect(
+        IosVpnRuntimeMode.fromWireValue('loopbackBridge'),
+        IosVpnRuntimeMode.loopbackBridge,
+      );
+      // An unknown value falls back to the bridge rather than losing the data
+      // plane entirely.
+      expect(
+        IosVpnRuntimeMode.fromWireValue('nonsense'),
+        IosVpnRuntimeMode.loopbackBridge,
+      );
+      expect(
+        IosVpnRuntimeMode.fromWireValue(null),
+        IosVpnRuntimeMode.loopbackBridge,
+      );
+    });
+
+    test('session plan hand-off is a no-op off iOS', () async {
+      if (Platform.isIOS) return;
+      await expectLater(
+        IosVpnDevice.writeSessionPlan('{}'),
+        completes,
+      );
+      await expectLater(IosVpnDevice.clearSessionPlan(), completes);
+      await expectLater(IosVpnDevice.stopTunnel(), completes);
+      await expectLater(
+        IosVpnDevice.startNative(address: '10.0.0.2', prefixLength: 32),
+        throwsA(isA<UnsupportedError>()),
+      );
+    });
   });
 }

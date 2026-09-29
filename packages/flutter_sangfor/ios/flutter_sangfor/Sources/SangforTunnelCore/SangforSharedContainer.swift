@@ -10,6 +10,10 @@ public enum SangforSharedContainer {
     public static let runtime = "runtime"
     public static let logs = "logs"
     public static let configFileName = "vpn-config.json"
+    /// The session plan the native data plane runs from. It contains the
+    /// tunnel signing key, so it is written with file protection and removed
+    /// when the tunnel stops.
+    public static let sessionPlanFileName = "tunnel-plan.json"
   }
 
   /// Returns the shared container URL for [appGroupIdentifier], or `nil`
@@ -67,5 +71,56 @@ public enum SangforSharedContainer {
     return base
       .appendingPathComponent(Path.configuration)
       .appendingPathComponent(Path.configFileName)
+  }
+
+  /// Writes the session plan the extension's native data plane runs from.
+  ///
+  /// The plan carries the tunnel signing key, so it lives in the App Group
+  /// container (which the OS restricts to the two processes that declare the
+  /// group) and must never be logged.
+  public static func writeSessionPlan(
+    _ data: Data,
+    appGroupIdentifier: String?
+  ) throws {
+    let url = try sessionPlanURL(appGroupIdentifier)
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try data.write(to: url, options: [.atomic, .completeFileProtection])
+  }
+
+  /// Reads the session plan written by [writeSessionPlan], if any.
+  public static func readSessionPlan(
+    appGroupIdentifier: String?
+  ) -> Data? {
+    guard let url = try? sessionPlanURL(appGroupIdentifier) else { return nil }
+    return try? Data(contentsOf: url)
+  }
+
+  /// Removes the stored plan; call it when the tunnel is torn down so a stale
+  /// key is never reused by a later session.
+  public static func removeSessionPlan(appGroupIdentifier: String?) {
+    guard let url = try? sessionPlanURL(appGroupIdentifier) else { return }
+    try? FileManager.default.removeItem(at: url)
+  }
+
+  private static func sessionPlanURL(
+    _ appGroupIdentifier: String?
+  ) throws -> URL {
+    guard
+      let base = containerURL(for: appGroupIdentifier)
+    else {
+      throw CocoaError(
+        .fileNoSuchFile,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "The App Group \(appGroupIdentifier ?? "") is unavailable."
+        ]
+      )
+    }
+    return base
+      .appendingPathComponent(Path.session)
+      .appendingPathComponent(Path.sessionPlanFileName)
   }
 }

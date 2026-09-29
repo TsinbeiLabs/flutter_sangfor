@@ -59,6 +59,7 @@ part of this project.
 - [x] Product-neutral SOCKS5 frontend (RFC 1928 no-auth CONNECT) and `dialTcp` on both connectors
 - [x] Userspace TCP termination for raw-IP planes (RFC 793 server role: checksums, MSS clamp, retransmit, window flow control)
 - [x] System-wide HTTP proxy adapters: WinINET (Windows), networksetup (macOS), NEProxySettings (iOS)
+- [x] Extension-native iOS data plane: the packet tunnel extension runs the tunnel itself (pure-Swift protocol core, cross-checked against Dart golden fixtures) so the VPN outlives the Runner
 - [x] Windows Wintun adapter (official signed DLL, FFI) and Linux TUN adapter (FFI ioctl)
 - [x] Android `VpnService` adapter (foreground service + Dart FFI fd)
 - [x] Dry-run connectors without network I/O

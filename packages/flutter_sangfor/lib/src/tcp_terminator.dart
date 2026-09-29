@@ -565,7 +565,7 @@ class _TerminatedConnection {
       _maybeFinish();
       return;
     }
-    if (tcpSequenceDifference(acknowledgment, _sendNext) > 0) {
+    if (tcpSequenceDifference(_sendNext, acknowledgment) > 0) {
       // Beyond anything we sent: ignore instead of trusting a bogus ACK.
       return;
     }
@@ -573,7 +573,10 @@ class _TerminatedConnection {
     while (_unacknowledged.isNotEmpty) {
       final oldest = _unacknowledged.first;
       final end = tcpSequenceAdd(oldest.sequenceNumber, oldest.length);
-      if (tcpSequenceDifference(end, acknowledgment) > 0) break;
+      // Stop at the first segment the ACK does not fully cover. A cumulative
+      // ACK spans several segments, so this must compare end against ack and
+      // not the other way round.
+      if (tcpSequenceDifference(acknowledgment, end) > 0) break;
       _unacknowledged.removeFirst();
       _sendUnacknowledged = end;
       advanced = true;

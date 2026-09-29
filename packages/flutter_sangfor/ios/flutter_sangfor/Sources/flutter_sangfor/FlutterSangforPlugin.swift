@@ -50,6 +50,10 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
     case "vpnStop":
       tunnelManager?.stop()
       result(nil)
+    case "vpnWriteSession":
+      writeSession(call, result: result)
+    case "vpnClearSession":
+      clearSession(call, result: result)
     case "vpnStats":
       requestStats(result: result)
     default:
@@ -208,6 +212,10 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       // (see SangforPacketTunnelProvider). Omitted keys mean "no proxy".
       "proxyHost": (args["proxyHost"] as? String ?? "") as NSString,
       "proxyPort": (args["proxyPort"] as? Int ?? 0) as NSNumber,
+      // "loopbackBridge" (default) forwards packets to the Runner over a local
+      // socket; "extensionNative" runs the tunnel inside the extension.
+      "runtimeMode": (args["runtimeMode"] as? String ?? "") as NSString,
+      "appGroupIdentifier": (args["appGroupIdentifier"] as? String ?? "") as NSString,
       "mtu": (args["mtu"] as? Int ?? 0) as NSNumber,
     ]
     manager.start(options: options) { error in
@@ -228,6 +236,47 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       )
     }
     return FlutterError(code: "tunnelStartFailed", message: error.localizedDescription, details: nil)
+  }
+
+  /// Stores the session plan the extension's native data plane runs from. The
+  /// payload is JSON produced by the Dart side and is written verbatim, so the
+  /// two implementations cannot drift on key spelling.
+  private func writeSession(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    guard
+      let plan = args["plan"] as? String,
+      !plan.isEmpty,
+      let data = plan.data(using: .utf8)
+    else {
+      result(
+        FlutterError(
+          code: "invalidSessionPlan",
+          message: "A JSON session plan is required.",
+          details: nil
+        )
+      )
+      return
+    }
+    let appGroup = resolvedAppGroupIdentifier(args["appGroupIdentifier"] as? String)
+    do {
+      try SangforSharedContainer.writeSessionPlan(
+        data,
+        appGroupIdentifier: appGroup
+      )
+      result(true)
+    } catch {
+      result(self.flutterError(for: error))
+    }
+  }
+
+  /// Drops the stored plan; the extension also removes it when the tunnel
+  /// stops, so this only covers a connect attempt that never started.
+  private func clearSession(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    SangforSharedContainer.removeSessionPlan(
+      appGroupIdentifier: resolvedAppGroupIdentifier(args["appGroupIdentifier"] as? String)
+    )
+    result(true)
   }
 
   /// Forwards a getStats control message to the running provider.

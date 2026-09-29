@@ -45,6 +45,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private var bridge: IpcBridge?
   private var readLoopRunning = false
 
+  /// Set while the extension runs its own data plane (`.extensionNative`).
+  private var nativeRuntime: SangforNativeTunnelRuntime?
+
   // Packets from the system waiting for the Runner to connect.
   private var pendingPackets: [Data] = []
   private var pendingBytes = 0
@@ -73,7 +76,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     options: [String: NSObject]?,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    let configuration = Self.configuration(from: options ?? [:])
+    let startOptions = options ?? [:]
+    let configuration = Self.configuration(from: startOptions)
     SangforLog.provider(
       "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0) proxy=\(configuration.proxyEndpoint.map { "\($0.host):\($0.port)" } ?? "none")"
     )
@@ -129,13 +133,18 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         : configuration.searchDomains
       settings.dnsSettings = dns
     }
-    if let proxy = configuration.proxyEndpoint {
+    if configuration.runtimeMode == .loopbackBridge,
+      let proxy = configuration.proxyEndpoint
+    {
       // Advertise the caller's loopback HTTP proxy as the system proxy for
       // the tunnel's lifetime. Gateways commonly publish resources as
       // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
       // clients (CFNetwork/NSURLSession) then reach them through the caller's
       // proxy instead of being dropped as unrouted. An empty match-domain
       // matches every host name, so all HTTP(S) traffic is proxied.
+      //
+      // The native data plane terminates those flows itself, so it must not
+      // advertise a proxy that only exists while the Runner is awake.
       let proxySettings = NEProxySettings()
       let server = NEProxyServer(address: proxy.host, port: proxy.port)
       proxySettings.httpEnabled = true
@@ -166,11 +175,68 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler(nil)
         return
       }
-      self.startIpcListener()
-      self.startPacketFlowReadLoop()
-      self.scheduleBridgeTimeout()
-      completionHandler(nil)
+      switch configuration.runtimeMode {
+      case .loopbackBridge:
+        self.startIpcListener()
+        self.startPacketFlowReadLoop()
+        self.scheduleBridgeTimeout()
+        completionHandler(nil)
+      case .extensionNative:
+        self.startNativeDataPlane(
+          appGroupIdentifier: self.resolvedAppGroupIdentifier(
+            options: startOptions
+          ),
+          completionHandler: completionHandler
+        )
+      }
     }
+  }
+
+  /// Runs the tunnel from inside this extension: the session plan the Runner
+  /// left in the App Group container is enough to bring the tunnel up, so the
+  /// VPN keeps working after iOS suspends the app.
+  private func startNativeDataPlane(
+    appGroupIdentifier: String?,
+    completionHandler: @escaping (Error?) -> Void
+  ) {
+    let runtime = SangforNativeTunnelRuntime(
+      packetFlow: packetFlow,
+      appGroupIdentifier: appGroupIdentifier,
+      queue: queue,
+      log: { SangforLog.network($0) }
+    )
+    nativeRuntime = runtime
+    runtime.start { [weak self] result in
+      guard let self else {
+        completionHandler(nil)
+        return
+      }
+      switch result {
+      case .failure(let error):
+        SangforLog.providerError("native data plane failed: \(error)")
+        self.nativeRuntime = nil
+        completionHandler(error)
+      case .success:
+        completionHandler(nil)
+      }
+    }
+  }
+
+  /// The App Group normally comes from the saved provider configuration; the
+  /// start options win so a caller can override it per connection.
+  private func resolvedAppGroupIdentifier(
+    options: [String: NSObject]
+  ) -> String? {
+    if let fromOptions = options["appGroupIdentifier"] as? String,
+      !fromOptions.isEmpty
+    {
+      return fromOptions
+    }
+    let providerConfiguration =
+      (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration
+    return providerConfiguration?[
+      SangforTunnelConfigurationKeys.appGroupIdentifier
+    ] as? String
   }
 
   public override func stopTunnel(
@@ -184,6 +250,13 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     listener = nil
     bridge?.close()
     bridge = nil
+    nativeRuntime?.stop()
+    nativeRuntime = nil
+    // The plan carries the tunnel signing key: never leave it behind for a
+    // later session to pick up.
+    SangforSharedContainer.removeSessionPlan(
+      appGroupIdentifier: resolvedAppGroupIdentifier(options: [:])
+    )
     completionHandler()
   }
 
@@ -211,9 +284,27 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       return
     }
     let snapshot = queue.sync { metrics }
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    completionHandler?(try? encoder.encode(snapshot))
+    var payload =
+      (try? JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(snapshot)
+      )) as? [String: Any] ?? [:]
+    // The native data plane keeps its own counters; surface them under a
+    // `native` key so the Runner can log both halves.
+    if let native = queue.sync(execute: { nativeRuntime?.statistics }) {
+      payload["native"] = [
+        "egress": native.egress,
+        "routed": native.routed,
+        "terminated": native.terminated,
+        "unrouted": native.unrouted,
+        "ingress": native.ingress,
+        "egressBytes": native.egressBytes,
+        "ingressBytes": native.ingressBytes,
+        "reconnects": native.reconnects,
+      ]
+    }
+    completionHandler?(
+      try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    )
   }
 
   private struct ProviderMessage: Codable {
@@ -233,7 +324,12 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       searchDomains: (options["searchDomains"] as? [String]) ?? [],
       proxyHost: options["proxyHost"] as? String,
       proxyPort: (options["proxyPort"] as? Int).flatMap { $0 > 0 ? $0 : nil },
-      mtu: (options["mtu"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+      mtu: (options["mtu"] as? Int).flatMap { $0 > 0 ? $0 : nil },
+      // An unknown or absent mode keeps the loopback bridge, so a Runner built
+      // against an older core never silently loses its data plane.
+      runtimeMode: SangforRuntimeMode(
+        rawValue: (options["runtimeMode"] as? String) ?? ""
+      ) ?? .loopbackBridge
     )
   }
 

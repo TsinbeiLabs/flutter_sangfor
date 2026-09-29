@@ -1,3 +1,45 @@
+## 0.0.7
+
+* Add the iOS extension-native data plane: `IosVpnRuntimeMode.extensionNative`,
+  `IosVpnDevice.startNative`, and `writeSessionPlan`/`clearSessionPlan` hand a
+  session plan to the packet tunnel extension through the App Group, and the
+  extension then runs the tunnel itself — L3 handshake, per-flow auth,
+  heartbeats, reconnect, TCP-tunnel dials, and local TCP termination. The VPN
+  keeps carrying traffic when iOS suspends the app, which the loopback bridge
+  could never do. The bridge stays the default.
+* The native core is pure Swift and verified off-device: SHA-256/HMAC, a JSON
+  writer that reproduces Dart's `jsonEncode` byte for byte, the L3 and TCP
+  tunnel frame codecs, the IPv4/TCP builder with full checksums, route
+  matching, the flow tracker, the userspace TCP terminator, and the L3
+  connection driver. `tool/run_swift_tests.sh` (or `.ps1`) checks all of it
+  against golden fixtures emitted by the Dart reference implementation.
+* Fix a TCP terminator stall: the ACK comparison was inverted, so a cumulative
+  ACK covering more than one segment never advanced the send window and the
+  flow hung after its first window of data.
+* Pin node certificates with the gateway's salted digest
+  (`SangforCertificateDigest`) instead of a plain SHA-256 of the DER.
+* Advertise the system proxy only in loopback-bridge mode; the native plane
+  terminates those flows itself and must not point apps at a proxy that only
+  exists while the Runner is awake.
+## 0.0.7
+
+* Add the iOS extension-native data plane: the packet tunnel extension can run
+  the tunnel itself (`IosVpnRuntimeMode.extensionNative`,
+  `IosVpnDevice.startNative`) from a session plan handed over through the App
+  Group (`IosVpnDevice.writeSessionPlan` / `clearSessionPlan`), so the VPN
+  survives the Runner being suspended. The loopback bridge stays the default.
+* Add the pure-Swift core that plane runs on: SHA-256/HMAC, a canonical JSON
+  writer that matches Dart's `jsonEncode` byte for byte, the L3 and TCP-tunnel
+  frame codecs, the IPv4/TCP packet builder with full checksums, route
+  matching, the userspace TCP terminator, and the L3 connection driver with
+  per-flow auth, heartbeats, and reconnect. `tool/run_swift_tests.sh` compiles
+  and checks all of it against golden fixtures emitted by the Dart reference
+  implementation, on Linux, Windows, and macOS.
+* Fix a TCP terminator stall: the acknowledgement comparison was inverted, so a
+  cumulative ACK covering more than one segment never advanced the send window
+  and the connection hung after its first window of data.
+* Pin node certificates with the gateway's salted digest
+  (`SangforCertificateDigest`) rather than a plain SHA-256 of the DER.
 ## 0.0.6
 
 * Add the userspace TCP terminator (`SangforTcpTerminator`,

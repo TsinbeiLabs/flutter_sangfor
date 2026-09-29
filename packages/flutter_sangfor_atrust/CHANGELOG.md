@@ -1,3 +1,22 @@
+## 0.0.7
+
+* Add `ATrustTunnel.plan()` and `ATrustTunnel.buildSessionPlan()`: resolve the
+  node topology and the client virtual IP without holding an L3 connection
+  open, then hand the result to an out-of-process data plane. Two live tunnels
+  for one session make the gateway drop one, so a caller that plans must not
+  also start.
+* Add `ATrustSessionPlan`, the App Group hand-off document, and
+  `ATrustAntiMitmData.certificateDigests` so the native transport pins node
+  certificates exactly like the Dart one.
+* Inherits the TCP terminator ACK fix from `flutter_sangfor` 0.0.7.
+## 0.0.7
+
+* Add `ATrustTunnel.plan()` and `ATrustTunnel.buildSessionPlan()`: resolve the
+  node topology and the client virtual IP without holding the L3 connection
+  open, so an out-of-process data plane (the iOS packet tunnel extension) can
+  take over. Two live tunnels for one session make the gateway drop one.
+* Add `ATrustSessionPlan`, the App Group hand-off document, and
+  `ATrustAntiMitmData.certificateDigests` for the native certificate pin check.
 ## 0.0.6
 
 * Add `ATrustTcpTermination` and `ATrustPacketTunnel`: TCP flows the gateway

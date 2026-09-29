@@ -500,6 +500,94 @@ void main() {
       }
     });
 
+    test('a cumulative ACK releases every segment it covers', () async {
+      final harness = _Harness().start();
+      addTearDown(harness.dispose);
+      final synAck = await _acceptSyn(harness);
+      harness.terminator.accept(
+        clientPacket(
+          sequence: 1001,
+          acknowledgment: synAck.sequenceNumber + 1,
+          flags: tcpFlagAck,
+        ),
+      );
+      await pumpEventQueue();
+      harness.upstream.deliver(List<int>.filled(3000, 7));
+      await pumpEventQueue();
+      final sent = harness.dataSegments;
+      expect(sent, hasLength(3));
+      final last = sent.last;
+      final cumulativeAck = last.sequenceNumber + last.payload.length;
+
+      // One ACK covering all three segments must retire all of them; the
+      // inverted comparison this replaces left the window shut forever.
+      harness.terminator.accept(
+        clientPacket(
+          sequence: 1001,
+          acknowledgment: cumulativeAck,
+          flags: tcpFlagAck,
+        ),
+      );
+      await pumpEventQueue();
+      harness.upstream.finish();
+      await pumpEventQueue();
+      expect(
+        harness.segments.any((segment) => segment.isFin),
+        isTrue,
+        reason: 'nothing is left unacknowledged, so the FIN is released',
+      );
+    });
+
+    test('a partial ACK only releases the segments it covers', () async {
+      final harness = _Harness().start();
+      addTearDown(harness.dispose);
+      final synAck = await _acceptSyn(harness);
+      harness.terminator.accept(
+        clientPacket(
+          sequence: 1001,
+          acknowledgment: synAck.sequenceNumber + 1,
+          flags: tcpFlagAck,
+        ),
+      );
+      await pumpEventQueue();
+      harness.upstream.deliver(List<int>.filled(3000, 7));
+      await pumpEventQueue();
+      final sent = harness.dataSegments;
+      expect(sent, hasLength(3));
+
+      // Acknowledge only the first segment: the FIN must stay pending.
+      harness.terminator.accept(
+        clientPacket(
+          sequence: 1001,
+          acknowledgment: sent.first.sequenceNumber + sent.first.payload.length,
+          flags: tcpFlagAck,
+        ),
+      );
+      await pumpEventQueue();
+      harness.upstream.finish();
+      await pumpEventQueue();
+      expect(
+        harness.segments.any((segment) => segment.isFin),
+        isFalse,
+        reason: 'two segments are still unacknowledged',
+      );
+
+      // Acknowledging the rest releases it.
+      final last = sent.last;
+      harness.terminator.accept(
+        clientPacket(
+          sequence: 1001,
+          acknowledgment: last.sequenceNumber + last.payload.length,
+          flags: tcpFlagAck,
+        ),
+      );
+      await pumpEventQueue();
+      expect(
+        harness.segments.any((segment) => segment.isFin),
+        isTrue,
+      );
+    });
+
     test('clamps the MSS to the smaller offer', () async {
       final harness = _Harness().start();
       addTearDown(harness.dispose);

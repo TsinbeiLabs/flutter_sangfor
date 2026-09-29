@@ -161,16 +161,28 @@ class ATrustAntiMitmData {
   /// rejects it when digests are advertised and none of them match.
   bool acceptsCertificate(List<int> der) {
     if (enable != 1) return true;
+    final expected = certificateDigests;
+    if (expected.isEmpty) return true;
+    return expected.contains(_certificateDigest(der));
+  }
+
+  /// The advertised certificate identity digests, in the form
+  /// [acceptsCertificate] compares against: uppercase hex SHA-256 over the
+  /// base64 of the DER plus the gateway's salt.
+  ///
+  /// Empty when anti-MITM is disabled or advertises no certificates. An
+  /// out-of-process data plane (the iOS packet tunnel extension) pins against
+  /// exactly these values.
+  List<String> get certificateDigests {
+    if (enable != 1) return const <String>[];
     final encodedCertificates = <String>[
       if (rsaCertificate != null && rsaCertificate!.isNotEmpty) rsaCertificate!,
       if (sm2EncryptionCertificate != null &&
           sm2EncryptionCertificate!.isNotEmpty)
         sm2EncryptionCertificate!,
     ];
-    if (encodedCertificates.isEmpty) return true;
-    final expected =
-        encodedCertificates.map(_certificateDigestFromBase64).toSet();
-    return expected.contains(_certificateDigest(der));
+    if (encodedCertificates.isEmpty) return const <String>[];
+    return encodedCertificates.map(_certificateDigestFromBase64).toList();
   }
 
   void _requireEnabled() {

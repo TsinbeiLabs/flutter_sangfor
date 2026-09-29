@@ -41,6 +41,25 @@ jobs:
       - name: Test
         run: flutter test
 
+  swift-core:
+    name: native swift core (packet tunnel data plane)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/flutter_sangfor
+    steps:
+      - uses: actions/checkout@v7
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+      # The pure-Swift half of the packet tunnel extension has to reproduce the
+      # Dart implementation's canonical JSON, HMAC signatures, and protocol
+      # frames byte for byte. The golden fixtures are checked in (and kept
+      # honest by the atrust package's fixture test), so this job only needs a
+      # Swift toolchain.
+      - name: Compile and run the native core checks
+        run: bash tool/run_swift_tests.sh
+
   windows:
     name: build windows example
     runs-on: windows-latest
@@ -59,7 +78,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
-    needs: [packages, windows]
+    needs: [packages, windows, swift-core]
     permissions:
       id-token: write
       contents: read
