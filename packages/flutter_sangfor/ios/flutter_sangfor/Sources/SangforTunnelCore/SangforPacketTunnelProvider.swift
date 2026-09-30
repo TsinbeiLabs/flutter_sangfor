@@ -75,7 +75,7 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   ) {
     let configuration = Self.configuration(from: options ?? [:])
     SangforLog.provider(
-      "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0)"
+      "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0) proxy=\(configuration.proxyHost ?? "none"):\(configuration.proxyPort ?? 0)"
     )
 
     // Fail closed: a malformed route is logged and skipped, never silently
@@ -131,6 +131,24 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     }
     if let mtu = configuration.mtu, mtu > 0 {
       settings.mtu = mtu as NSNumber
+    }
+    if
+      let proxyHost = configuration.proxyHost?.trimmingCharacters(in: .whitespaces),
+      !proxyHost.isEmpty,
+      let proxyPort = configuration.proxyPort,
+      (1...65_535).contains(proxyPort)
+    {
+      let proxy = NEProxySettings()
+      let server = NEProxyServer(address: proxyHost, port: proxyPort)
+      proxy.httpEnabled = true
+      proxy.httpServer = server
+      proxy.httpsEnabled = true
+      proxy.httpsServer = server
+      // An empty match domain is Apple's representation for the default
+      // proxy. The containing app's loopback proxy performs the actual
+      // split-tunnel decision and dials non-VPN hosts directly.
+      proxy.matchDomains = [""]
+      settings.proxySettings = proxy
     }
     // IPv4-only MVP: a documented limitation. IPv6 packets are dropped
     // with a counter instead of being mislabeled as IPv4.
@@ -212,7 +230,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       routes: (options["routes"] as? [String]) ?? [],
       dnsServers: (options["dnsServers"] as? [String]) ?? [],
       searchDomains: (options["searchDomains"] as? [String]) ?? [],
-      mtu: (options["mtu"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+      mtu: (options["mtu"] as? Int).flatMap { $0 > 0 ? $0 : nil },
+      proxyHost: options["proxyHost"] as? String,
+      proxyPort: (options["proxyPort"] as? Int).flatMap { $0 > 0 ? $0 : nil }
     )
   }
 

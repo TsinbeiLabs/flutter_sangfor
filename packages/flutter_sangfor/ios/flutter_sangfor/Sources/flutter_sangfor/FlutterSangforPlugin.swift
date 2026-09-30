@@ -205,6 +205,8 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       "dnsServers": (args["dnsServers"] as? [String] ?? []) as NSArray,
       "searchDomains": (args["searchDomains"] as? [String] ?? []) as NSArray,
       "mtu": (args["mtu"] as? Int ?? 0) as NSNumber,
+      "proxyHost": (args["proxyHost"] as? String ?? "127.0.0.1") as NSString,
+      "proxyPort": (args["proxyPort"] as? Int ?? 0) as NSNumber,
     ]
     manager.start(options: options) { error in
       if let error {

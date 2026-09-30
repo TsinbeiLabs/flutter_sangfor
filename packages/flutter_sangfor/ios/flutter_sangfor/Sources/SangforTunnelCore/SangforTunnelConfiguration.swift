@@ -43,6 +43,8 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
   public var dnsServers: [String]
   public var searchDomains: [String]
   public var mtu: Int?
+  public var proxyHost: String?
+  public var proxyPort: Int?
   public var runtimeMode: SangforRuntimeMode
 
   public init(
@@ -53,6 +55,8 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
     dnsServers: [String] = [],
     searchDomains: [String] = [],
     mtu: Int? = nil,
+    proxyHost: String? = nil,
+    proxyPort: Int? = nil,
     runtimeMode: SangforRuntimeMode = .loopbackBridge
   ) {
     self.schemaVersion = schemaVersion
@@ -62,6 +66,8 @@ public struct SangforTunnelConfiguration: Codable, Equatable {
     self.dnsServers = dnsServers
     self.searchDomains = searchDomains
     self.mtu = mtu
+    self.proxyHost = proxyHost
+    self.proxyPort = proxyPort
     self.runtimeMode = runtimeMode
   }
 

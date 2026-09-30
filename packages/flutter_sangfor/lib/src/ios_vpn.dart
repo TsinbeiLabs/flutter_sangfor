@@ -95,7 +95,11 @@ class IosVpnDevice implements SangforPacketDevice {
   /// returns a packet device connected to the NE via local TCP.
   ///
   /// [address], [prefixLength], [routes], [dnsServers], [searchDomains],
-  /// and [mtu] configure the tunnel network settings.
+  /// and [mtu] configure the tunnel network settings. When [proxyPort] is
+  /// non-zero, iOS publishes [proxyHost]:[proxyPort] as the HTTP and HTTPS
+  /// proxy for traffic using the packet tunnel. This is required when the
+  /// upstream VPN exposes some resources through a TCP proxy rather than its
+  /// raw L3 data plane.
   ///
   /// [providerBundleIdentifier] identifies the consumer's packet tunnel
   /// `.appex` target; resolution order is this argument, then the Runner
@@ -111,6 +115,8 @@ class IosVpnDevice implements SangforPacketDevice {
     List<String> dnsServers = const <String>[],
     List<String> searchDomains = const <String>[],
     int mtu = 0,
+    String proxyHost = '127.0.0.1',
+    int proxyPort = 0,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
     String localizedDescription = 'flutter_sangfor',
@@ -126,6 +132,8 @@ class IosVpnDevice implements SangforPacketDevice {
       'dnsServers': dnsServers,
       'searchDomains': searchDomains,
       'mtu': mtu,
+      'proxyHost': proxyHost,
+      'proxyPort': proxyPort,
       'providerBundleIdentifier': providerBundleIdentifier,
       'appGroupIdentifier': appGroupIdentifier,
       'localizedDescription': localizedDescription,
