@@ -74,11 +74,19 @@ jobs:
       # No C toolchain anywhere in the dependency graph: crypto is RustCrypto
       # and TLS is rustls on the RustCrypto provider, so OHOS and Android stay
       # a plain `cargo build`. `ring` or `aws-lc-rs` would break this.
+      #
+      # Libraries only, not `sangfor-tunneld`: linking a binary for a foreign
+      # libc needs that libc's toolchain, which is a packaging concern rather
+      # than a property of this code. The `tun` feature is on so the Linux
+      # descriptor code is actually compiled -- `ioctl`'s request parameter is
+      # `c_ulong` on glibc and `c_int` on musl, and only building both catches
+      # that.
       - name: Cross-compile (no C toolchain required)
         run: |
           rustup target add aarch64-linux-android aarch64-unknown-linux-ohos x86_64-unknown-linux-musl
           cargo build --release --target x86_64-unknown-linux-musl \
-            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun -p sangfor-tunneld
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun \
+            --features sangfor-tun/tun
           cargo build --release --target aarch64-linux-android \
             -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun --features sangfor-tun/fd
           cargo build --release --target aarch64-unknown-linux-ohos \
@@ -117,17 +125,17 @@ jobs:
            "processPlatform":"linux","nodes":{"major":["203.0.113.9:441"]},
            "majorNodeGroup":"major","routes":[],"dnsServers":[]}
           PLAN
-          ../target/release/sangfor-tunneld --dry-run --check \
+          target/release/sangfor-tunneld --dry-run --check \
             --plan /tmp/plan.json --interface smoke0 --route 10.1.0.0/16
       - name: Reject a plan it cannot use
         run: |
           echo 'not a plan' > /tmp/bad.json
-          if ../target/release/sangfor-tunneld --dry-run --check --plan /tmp/bad.json; then
+          if target/release/sangfor-tunneld --dry-run --check --plan /tmp/bad.json; then
             echo "a malformed plan should not start a tunnel" >&2
             exit 1
           fi
       - name: Print the usage text
-        run: ../target/release/sangfor-tunneld --help
+        run: target/release/sangfor-tunneld --help
 
   swift-core:
     name: native swift core (packet tunnel data plane)

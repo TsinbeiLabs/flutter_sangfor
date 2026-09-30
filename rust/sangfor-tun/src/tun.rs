@@ -13,6 +13,9 @@ use crate::device::{PacketDevice, READ_POLL_INTERVAL};
 use crate::unix_io;
 
 const TUN_DEVICE: &str = "/dev/net/tun";
+/// `TUNSETIFF`, stored wide and narrowed at the call: `libc::ioctl`'s request
+/// parameter is `c_ulong` on glibc and `c_int` on musl, so a single declared
+/// type will not compile for both. The value fits either way.
 const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
 const IFF_TUN: libc::c_short = 0x0001;
 const IFF_NO_PI: libc::c_short = 0x1000;
@@ -80,7 +83,9 @@ impl TunDevice {
         }
         // SAFETY: `TUNSETIFF` reads `sizeof(ifreq)` from `request` and writes
         // the assigned name back into the same buffer, which outlives the call.
-        let result = unsafe { libc::ioctl(fd, TUNSETIFF, &mut request) };
+        // The request constant is narrowed to whatever this target's `ioctl`
+        // declares; see `TUNSETIFF`.
+        let result = unsafe { libc::ioctl(fd, TUNSETIFF as _, &mut request) };
         if result < 0 {
             let error = io::Error::last_os_error();
             // SAFETY: `fd` is live and is not used again.
