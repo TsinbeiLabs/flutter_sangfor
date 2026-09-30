@@ -444,7 +444,8 @@ class SangforTunnelControlClient {
     required String configDocument,
   }) async {
     final directory = await Directory.systemTemp.createTemp('sangfor-session');
-    final planFile = File('${directory.path}${Platform.pathSeparator}plan.json');
+    final planFile =
+        File('${directory.path}${Platform.pathSeparator}plan.json');
     final configFile = File(
       '${directory.path}${Platform.pathSeparator}host.json',
     );
@@ -705,10 +706,11 @@ class SangforTunnelInstalledDaemon implements SangforTunnelDaemon {
   Future<void> startSession({
     required String planDocument,
     required SangforTunnelHostConfig config,
-  }) => _client.startSession(
-    planDocument: planDocument,
-    configDocument: config.encode(),
-  );
+  }) =>
+      _client.startSession(
+        planDocument: planDocument,
+        configDocument: config.encode(),
+      );
 
   @override
   Future<SangforTunnelSnapshot> status() => _client.status();
@@ -861,10 +863,11 @@ class SangforTunnelDaemonProcess implements SangforTunnelDaemon {
   Future<void> startSession({
     required String planDocument,
     required SangforTunnelHostConfig config,
-  }) => _client.startSession(
-    planDocument: planDocument,
-    configDocument: config.encode(),
-  );
+  }) =>
+      _client.startSession(
+        planDocument: planDocument,
+        configDocument: config.encode(),
+      );
 
   @override
   Future<SangforTunnelSnapshot> status() => _client.status();

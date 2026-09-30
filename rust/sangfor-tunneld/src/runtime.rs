@@ -296,34 +296,19 @@ pub fn supervise(config: DaemonConfig, initial: Option<InitialSession>) -> Exit 
     let running = Arc::new(AtomicBool::new(false));
     let (inbox_tx, inbox) = mpsc::channel::<Message>();
 
-    let mut listener = crate::transport::open(
-        &config,
-        Arc::clone(&snapshot),
-        Arc::clone(&running),
-        inbox_tx.clone(),
-        Arc::clone(&log),
-    );
-    spawn_stdin_control(
-        Arc::clone(&snapshot),
-        Arc::clone(&running),
-        config.control_token.clone(),
-        inbox_tx.clone(),
-    );
-
     let mut session: Option<Session> = None;
     let mut generation: u64 = 0;
     let mut last = Exit::Clean;
     let mut stdin_open = true;
 
-    // Nothing can reach this process any more: no socket, no stdin, no session
-    // left to report. A daemon in that state can never be told to start or to
-    // stop, so it exits — which is what a launcher that piped a plan in and
-    // closed stdin is waiting for. With a control socket open the daemon stays
-    // up instead, idle between sessions, because that is the whole point of it.
-    let unreachable = |stdin_open: bool, listener: &Option<_>, session: &Option<Session>| {
-        !stdin_open && listener.is_none() && session.is_none()
-    };
-
+    // Started *before* the control channel opens, so that "the socket answers"
+    // implies "the initial session, if any, has been started".
+    //
+    // That ordering is the contract a launcher relies on. Opening the socket
+    // first leaves a window where a client polls for readiness, sees the daemon
+    // up, reads `sessionRunning: false`, concludes nothing started, and sends
+    // `start` — which is then refused because a session *is* running. Two
+    // answers, both true, and no way for the client to tell which it got.
     if let Some(initial) = initial {
         generation += 1;
         match spawn_session(
@@ -344,9 +329,34 @@ pub fn supervise(config: DaemonConfig, initial: Option<InitialSession>) -> Exit 
                 last = Exit::Failed;
             }
         }
-    } else {
+    }
+
+    let mut listener = crate::transport::open(
+        &config,
+        Arc::clone(&snapshot),
+        Arc::clone(&running),
+        inbox_tx.clone(),
+        Arc::clone(&log),
+    );
+    spawn_stdin_control(
+        Arc::clone(&snapshot),
+        Arc::clone(&running),
+        config.control_token.clone(),
+        inbox_tx.clone(),
+    );
+
+    if session.is_none() {
         log.line("idle; waiting for a start request");
     }
+
+    // Nothing can reach this process any more: no socket, no stdin, no session
+    // left to report. A daemon in that state can never be told to start or to
+    // stop, so it exits — which is what a launcher that piped a plan in and
+    // closed stdin is waiting for. With a control socket open the daemon stays
+    // up instead, idle between sessions, because that is the whole point of it.
+    let unreachable = |stdin_open: bool, listener: &Option<_>, session: &Option<Session>| {
+        !stdin_open && listener.is_none() && session.is_none()
+    };
 
     let exit = loop {
         let message = match inbox.recv() {
@@ -1051,10 +1061,18 @@ mod tests {
         // `--plan` used to mean "run this session and exit". It now means "run
         // this session first", which is what makes one elevated process serve
         // more than one connect/disconnect cycle.
+        //
+        // There is no sleep between the control socket accepting and this
+        // assertion, and that is deliberate: the socket answering has to imply
+        // the initial session has started. Opening the socket first leaves a
+        // window where a launcher reads `sessionRunning: false`, concludes
+        // nothing started, sends `start`, and is refused because something did.
+        // It failed intermittently under `cargo test --workspace` before the
+        // ordering was fixed, and passes every time after.
         let supervisor = start_supervisor("initial", true);
         assert!(
             session_running(&supervisor),
-            "the initial session is running"
+            "the initial session is running by the time the socket answers"
         );
         let status = ask(&supervisor, r#"{"cmd":"status"}"#);
         let data = status.data.expect("a snapshot");

@@ -568,7 +568,8 @@ void main() {
         // client that cannot tell that from "starting" either waits forever or
         // sends a second start and is refused.
         final idle = await daemon.status();
-        expect(idle.sessionRunning, isFalse, reason: 'it starts with no session');
+        expect(idle.sessionRunning, isFalse,
+            reason: 'it starts with no session');
         expect(idle.interfaceName, isNull, reason: 'nothing has been opened');
 
         // Routes arrive with the session, not at launch: which destinations
@@ -627,7 +628,8 @@ void main() {
           0,
           reason: 'the counters describe the new session, not the old one',
         );
-        expect(second.fatal, isNull, reason: 'and neither does its error state');
+        expect(second.fatal, isNull,
+            reason: 'and neither does its error state');
 
         final code = await daemon.stop();
         expect(code, 0, reason: 'a requested stop exits cleanly');
@@ -702,7 +704,8 @@ void main() {
       // from that file, so getting either wrong looks like a hung connect.
       final daemon = await FakeDaemon.start(token: 'installed-token');
       addTearDown(daemon.close);
-      final directory = await Directory.systemTemp.createTemp('sangfor-installed');
+      final directory =
+          await Directory.systemTemp.createTemp('sangfor-installed');
       addTearDown(() => directory.delete(recursive: true));
       await File(
         '${directory.path}${Platform.pathSeparator}'
@@ -717,7 +720,8 @@ void main() {
       final installed = await SangforTunnelInstalledDaemon.connect(
         directory: directory,
       );
-      expect(installed, isNotNull, reason: 'the configuration named a live daemon');
+      expect(installed, isNotNull,
+          reason: 'the configuration named a live daemon');
       addTearDown(installed!.release);
 
       final snapshot = await installed.status();
@@ -786,7 +790,8 @@ void main() {
       // it, and the app cannot start another.
       final daemon = await FakeDaemon.start(token: 'installed-token');
       addTearDown(daemon.close);
-      final directory = await Directory.systemTemp.createTemp('sangfor-release');
+      final directory =
+          await Directory.systemTemp.createTemp('sangfor-release');
       addTearDown(() => directory.delete(recursive: true));
       await File(
         '${directory.path}${Platform.pathSeparator}'
@@ -804,7 +809,8 @@ void main() {
       await installed!.release();
       final commands = daemon.requests.map((r) => r['cmd']).toList();
       expect(commands, contains('stopSession'));
-      expect(commands, isNot(contains('stop')), reason: 'the process is not ours to end');
+      expect(commands, isNot(contains('stop')),
+          reason: 'the process is not ours to end');
     });
   });
 
@@ -849,7 +855,8 @@ void main() {
       // daemon has read it would outlive the session it belongs to.
       final daemon = await FakeDaemon.start();
       addTearDown(daemon.close);
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       addTearDown(client.close);
 
       String? planPath;
@@ -885,9 +892,11 @@ void main() {
     test('a refused start surfaces the daemon’s reason', () async {
       final daemon = await FakeDaemon.start();
       addTearDown(daemon.close);
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       addTearDown(client.close);
-      daemon.refuseNext = 'a session is already running; send stopSession first';
+      daemon.refuseNext =
+          'a session is already running; send stopSession first';
       await expectLater(
         client.startSession(planDocument: '{}', configDocument: '{}'),
         throwsA(

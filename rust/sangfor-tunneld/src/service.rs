@@ -570,13 +570,41 @@ mod tests {
 
     #[test]
     fn the_task_runs_the_daemon_against_its_configuration() {
-        let command = install().task_command_line();
+        // The expectation is built with the same `PathBuf::join` the code uses,
+        // so this asserts the *quoting* — which is the subject — rather than
+        // which separator the host platform happens to compile with. The exact
+        // Windows spelling is pinned separately, on Windows.
+        let install = install();
+        let config = install.host_config_path().display().to_string();
         assert_eq!(
-            command,
+            install.task_command_line(),
+            format!(
+                r#""C:\Program Files\Luotopia\sangfor-tunneld.exe" --config {}"#,
+                quote(&config)
+            ),
+            "the executable is quoted because its path has a space"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_install_paths_are_spelled_the_way_windows_spells_them() {
+        // Pinned only where the module is used: `--install` refuses to run
+        // anywhere else, and `PathBuf::join` produces a forward slash on a host
+        // that is not Windows. Asserting the separator everywhere would fail on
+        // every Linux runner for a reason that has nothing to do with the code.
+        assert_eq!(
+            install().task_command_line(),
             r#""C:\Program Files\Luotopia\sangfor-tunneld.exe" --config "#.to_string()
-                + r"C:\Users\alice\AppData\Local\sangfor-tunneld\host.json",
-            "the executable is quoted because its path has a space, and the
-             configuration is not because this one does not"
+                + r"C:\Users\alice\AppData\Local\sangfor-tunneld\host.json"
+        );
+        assert_eq!(
+            install().log_path(),
+            PathBuf::from(r"C:\Users\alice\AppData\Local\sangfor-tunneld\tunneld.log")
+        );
+        assert_eq!(
+            install().host_config_path(),
+            PathBuf::from(r"C:\Users\alice\AppData\Local\sangfor-tunneld\host.json")
         );
     }
 
@@ -590,10 +618,15 @@ mod tests {
             directory: PathBuf::from(r"C:\Users\John Smith\AppData\Local\sangfor-tunneld"),
             ..install()
         };
-        let command = install.task_command_line();
+        let expected = quote(&install.host_config_path().display().to_string());
         assert!(
-            command.contains(r#""C:\Users\John Smith\AppData\Local\sangfor-tunneld\host.json""#),
-            "{command}"
+            expected.starts_with('"') && expected.ends_with('"'),
+            "the path is quoted because it has a space in it: {expected}"
+        );
+        assert!(
+            install.task_command_line().contains(&expected),
+            "the task command carries it: {}",
+            install.task_command_line()
         );
     }
 
@@ -671,12 +704,9 @@ mod tests {
         let config = install().host_config("s3cret-token");
         assert_eq!(config.control_port, Some(7166));
         assert_eq!(config.control_token.as_deref(), Some("s3cret-token"));
-        assert_eq!(
-            config.log_path,
-            Some(PathBuf::from(
-                r"C:\Users\alice\AppData\Local\sangfor-tunneld\tunneld.log"
-            ))
-        );
+        // Compared against the same join the code uses; the literal Windows
+        // spelling is pinned in the `#[cfg(windows)]` test above.
+        assert_eq!(config.log_path, Some(install().log_path()));
         assert_eq!(config.device, DeviceKind::Wintun);
         assert_eq!(config.interface, "Luotopia");
     }
