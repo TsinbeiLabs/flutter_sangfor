@@ -256,7 +256,8 @@ void main() {
 
     test('pings and reads a snapshot', () async {
       daemon = await FakeDaemon.start();
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       addTearDown(client.close);
 
       await client.ping();
@@ -312,7 +313,8 @@ void main() {
 
     test('concurrent requests are matched to their callers in order', () async {
       daemon = await FakeDaemon.start();
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       addTearDown(client.close);
 
       // One socket, several requests in flight. The protocol has no ids, so
@@ -330,15 +332,17 @@ void main() {
       }
       expect(daemon.requests, hasLength(3));
       expect(
-        daemon.requests
-            .every((Map<String, Object?> request) => request['cmd'] == 'status'),
+        daemon.requests.every(
+            (Map<String, Object?> request) => request['cmd'] == 'status'),
         isTrue,
       );
     });
 
     test('a daemon that hangs up fails the request in flight', () async {
-      daemon = await FakeDaemon.start()..dropOnNextRequest = true;
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      daemon = await FakeDaemon.start()
+        ..dropOnNextRequest = true;
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       addTearDown(client.close);
 
       await expectLater(
@@ -355,7 +359,8 @@ void main() {
 
     test('closing the client refuses further requests', () async {
       daemon = await FakeDaemon.start();
-      final client = await SangforTunnelControlClient.connect(port: daemon.port);
+      final client =
+          await SangforTunnelControlClient.connect(port: daemon.port);
       await client.close();
       expect(client.isClosed, isTrue);
       await expectLater(
@@ -478,7 +483,8 @@ void main() {
 
 /// A plan the daemon will accept. It names a documentation-range node so the
 /// tunnel comes up and then fails to connect, which is all these tests need.
-const String kSubprocessPlan = '{"schemaVersion":1,"sid":"dart","deviceId":"dev",'
+const String kSubprocessPlan =
+    '{"schemaVersion":1,"sid":"dart","deviceId":"dev",'
     '"connectionId":"conn","username":"user",'
     '"signKeyBase64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",'
     '"lang":"en","processName":"tunneld","processPath":"/tunneld",'

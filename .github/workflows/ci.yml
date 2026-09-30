@@ -34,6 +34,24 @@ jobs:
           printf '\ndependency_overrides:\n  flutter_sangfor:\n    path: ../flutter_sangfor\n' >> pubspec.yaml
       - name: Resolve dependencies
         run: flutter pub get
+      # `tunnel_daemon_test.dart` drives the real `sangfor-tunneld` binary and
+      # skips when it is absent. Building it here turns that skip into coverage
+      # of the one contract no single-language test can check: that Dart and Rust
+      # agree on the wire format, the log line reporting the control port, the
+      # status reply, and the exit codes. A rename on either side fails here
+      # rather than against a live gateway.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.package == 'flutter_sangfor'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.package == 'flutter_sangfor'
+        with:
+          workspaces: rust
+      - name: Build the tunnel daemon
+        if: matrix.package == 'flutter_sangfor'
+        working-directory: rust
+        run: |
+          cargo build --release -p sangfor-tunneld
+          echo "SANGFOR_TUNNELD=$GITHUB_WORKSPACE/rust/target/release/sangfor-tunneld" >> "$GITHUB_ENV"
       - name: Check formatting
         run: dart format --output=none --set-exit-if-changed lib test
       - name: Analyze

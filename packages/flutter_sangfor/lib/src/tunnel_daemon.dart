@@ -527,7 +527,8 @@ class SangforTunnelDaemonProcess {
       );
     }
     final directory = await Directory.systemTemp.createTemp('sangfor-tunnel');
-    final planFile = File('${directory.path}${Platform.pathSeparator}plan.json');
+    final planFile =
+        File('${directory.path}${Platform.pathSeparator}plan.json');
     final configFile =
         File('${directory.path}${Platform.pathSeparator}host.json');
     try {
