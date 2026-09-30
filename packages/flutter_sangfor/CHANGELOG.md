@@ -1,3 +1,23 @@
+## 0.0.9
+
+* Add a client for `sangfor-tunneld`, the process that runs the Rust data plane
+  outside the app: `SangforTunnelDaemon`, with two ways to get one.
+  `SangforTunnelInstalledDaemon.connect()` finds a daemon installed as an
+  elevated logon task by reading the configuration in the user's profile, which
+  is what removes the elevation requirement on Windows — creating a wintun
+  adapter needs an elevated process, and an app that runs `asInvoker` cannot do
+  it at all. `SangforTunnelDaemonProcess.start()` launches the binary as a
+  child, which inherits the app's privileges and so is for `loopback` and
+  `--dry-run` work.
+* Both drive the same control protocol — `start`, `status`, `stopSession`,
+  `stop` — over a token-gated loopback socket. The daemon outlives its
+  sessions, so one elevated process serves repeated connect/disconnect cycles.
+* `SangforTunnelHostConfig` and `SangforTunnelSnapshot` model the daemon's two
+  documents. Decoding is lenient where the daemon's own parsing is strict, so a
+  newer daemon that adds a field does not break an older app.
+* A session plan is handed over by **path**, never inline: it carries the
+  request signing key, and the control channel is reachable by any local process
+  that has the token.
 ## 0.0.8
 
 * Keep the extension-native tunnel alive across a restart: the session plan is
