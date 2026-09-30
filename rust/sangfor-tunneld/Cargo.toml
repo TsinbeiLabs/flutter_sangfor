@@ -1,0 +1,36 @@
+[package]
+name = "sangfor-tunneld"
+description = "The tunnel process: runs the sangfor data plane against a platform packet device, outside the UI process."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sangfor-tunneld"
+path = "src/main.rs"
+
+[dependencies]
+sangfor-core = { path = "../sangfor-core" }
+sangfor-tls = { path = "../sangfor-tls" }
+sangfor-tun = { path = "../sangfor-tun" }
+sangfor-host = { path = "../sangfor-host" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+sangfor-tun = { path = "../sangfor-tun", features = ["wintun"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sangfor-tun = { path = "../sangfor-tun", features = ["tun"] }
+
+[target.'cfg(unix)'.dependencies]
+sangfor-tun = { path = "../sangfor-tun", features = ["fd"] }
+
+[lints.rust]
+# One `unsafe` call in the whole crate: adopting a descriptor the platform
+# service handed over. Denied rather than forbidden so that call can be allowed
+# explicitly, with its safety argument next to it.
+unsafe_code = "deny"
+missing_docs = "warn"

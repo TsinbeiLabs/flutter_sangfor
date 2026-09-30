@@ -49,5 +49,5 @@ pub use channel::{
 };
 pub use host::{
     wait_until, Host, HostConfig, HostEvent, HostHandle, HostObserver, RecordingObserver, Role,
-    Statistics,
+    Statistics, StatisticsSink,
 };

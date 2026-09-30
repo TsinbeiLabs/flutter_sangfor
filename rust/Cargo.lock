@@ -825,6 +825,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sangfor-tunneld"
+version = "0.1.0"
+dependencies = [
+ "sangfor-core",
+ "sangfor-host",
+ "sangfor-tls",
+ "sangfor-tun",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sec1"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

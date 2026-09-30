@@ -78,7 +78,7 @@ jobs:
         run: |
           rustup target add aarch64-linux-android aarch64-unknown-linux-ohos x86_64-unknown-linux-musl
           cargo build --release --target x86_64-unknown-linux-musl \
-            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun -p sangfor-tunneld
           cargo build --release --target aarch64-linux-android \
             -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun --features sangfor-tun/fd
           cargo build --release --target aarch64-unknown-linux-ohos \
@@ -90,6 +90,44 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo build --release --target x86_64-pc-windows-msvc \
             -p sangfor-tun --features sangfor-tun/wintun
+
+  tunnel-daemon:
+    name: tunnel daemon (sangfor-tunneld)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build the daemon
+        run: cargo build --release -p sangfor-tunneld
+      # Proves the shipped binary links, decodes a plan, opens a device, and
+      # exits cleanly -- with no driver, no elevation, and no gateway. The
+      # loopback device is what makes that possible on a runner.
+      - name: Smoke-test --dry-run --check
+        run: |
+          cat > /tmp/plan.json <<'PLAN'
+          {"schemaVersion":1,"sid":"smoke","deviceId":"dev","connectionId":"conn",
+           "username":"user","signKeyBase64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+           "lang":"en","processName":"tunneld","processPath":"/tunneld",
+           "processPlatform":"linux","nodes":{"major":["203.0.113.9:441"]},
+           "majorNodeGroup":"major","routes":[],"dnsServers":[]}
+          PLAN
+          ../target/release/sangfor-tunneld --dry-run --check \
+            --plan /tmp/plan.json --interface smoke0 --route 10.1.0.0/16
+      - name: Reject a plan it cannot use
+        run: |
+          echo 'not a plan' > /tmp/bad.json
+          if ../target/release/sangfor-tunneld --dry-run --check --plan /tmp/bad.json; then
+            echo "a malformed plan should not start a tunnel" >&2
+            exit 1
+          fi
+      - name: Print the usage text
+        run: ../target/release/sangfor-tunneld --help
 
   swift-core:
     name: native swift core (packet tunnel data plane)
@@ -128,7 +166,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
-    needs: [packages, windows, swift-core, rust-core]
+    needs: [packages, windows, swift-core, rust-core, tunnel-daemon]
     permissions:
       id-token: write
       contents: read

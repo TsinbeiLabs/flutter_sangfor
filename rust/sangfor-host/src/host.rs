@@ -95,6 +95,11 @@ pub trait HostObserver: Send + Sync + 'static {
     fn on_event(&self, event: HostEvent);
 }
 
+/// Called with the plane's counters and the host's own, once per loop
+/// iteration. See [`Host::set_statistics_sink`].
+pub type StatisticsSink =
+    Arc<dyn Fn(&sangfor_core::plane::Statistics, &Statistics) + Send + Sync + 'static>;
+
 /// Counters the host adds to the plane's own.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Statistics {
@@ -229,6 +234,7 @@ pub struct Host {
     connector: Arc<dyn Connector>,
     config: HostConfig,
     observer: Option<Arc<dyn HostObserver>>,
+    statistics_sink: Option<StatisticsSink>,
 
     poll: Poll,
     waker: Arc<Waker>,
@@ -279,6 +285,7 @@ impl Host {
             connector,
             config,
             observer: None,
+            statistics_sink: None,
             events: Events::with_capacity(128),
             poll,
             waker: Arc::new(waker),
@@ -301,6 +308,16 @@ impl Host {
     /// Receives events. Call before [`Self::run`].
     pub fn set_observer(&mut self, observer: Arc<dyn HostObserver>) {
         self.observer = Some(observer);
+    }
+
+    /// Publishes both statistics structs to [sink] once per loop iteration.
+    ///
+    /// A control channel on another thread needs live counters, and the host
+    /// owns the plane so nothing outside it can read them. Called from the loop
+    /// thread, so a sink that touches UI or platform objects must hop threads
+    /// itself.
+    pub fn set_statistics_sink(&mut self, sink: StatisticsSink) {
+        self.statistics_sink = Some(sink);
     }
 
     /// The plane's own counters.
@@ -374,6 +391,7 @@ impl Host {
             self.drain_commands();
             self.drain_packets();
             self.tick();
+            self.publish_statistics();
         }
         self.finish()
     }
@@ -387,6 +405,15 @@ impl Host {
         // the reader thread; the flag alone would wait out a poll interval.
         let _ = self.device.close();
         let _ = self.waker.wake();
+    }
+
+    /// Hands the current counters to the sink, if one was registered.
+    fn publish_statistics(&self) {
+        if let Some(sink) = &self.statistics_sink {
+            let plane = self.plane.statistics();
+            let host = self.statistics();
+            sink(&plane, &host);
+        }
     }
 
     fn finish(&mut self) -> io::Result<()> {

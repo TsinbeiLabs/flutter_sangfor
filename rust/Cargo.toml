@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["sangfor-core", "sangfor-tls", "sangfor-tun", "sangfor-host", "sangfor-ffi"]
+members = [
+    "sangfor-core",
+    "sangfor-tls",
+    "sangfor-tun",
+    "sangfor-host",
+    "sangfor-tunneld",
+    "sangfor-ffi",
+]
 
 [workspace.package]
 version = "0.1.0"

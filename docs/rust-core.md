@@ -1,11 +1,14 @@
 # `sangfor-core`: one Rust data plane for five platforms
 
-Status: Phases 1–2 landed. `rust/` builds and is tested on Linux/Windows CI,
-and the whole stack now runs end to end against a fake gateway; Phases 3–6 are
-open. Supersedes the per-language data planes (`flutter_sangfor_atrust` Dart,
-`SangforTunnelCore/Native` Swift) as the production path; both stay as reference
-implementations and fallbacks until each platform is verified against an
-authorized gateway.
+Status: Phases 1, 2, and most of 4 landed. `rust/` builds and is tested on
+Linux/Windows CI, the whole stack runs end to end against a fake gateway, and
+there is a tunnel process binary that starts, configures itself, serves a
+control protocol, and exits cleanly. Phase 3 (iOS) and Phase 5 (Android/OHOS
+service processes) are open, and Phase 4 still needs its Windows service wrapper
+and its app-side client. Supersedes the per-language data planes
+(`flutter_sangfor_atrust` Dart, `SangforTunnelCore/Native` Swift) as the
+production path; both stay as reference implementations and fallbacks until each
+platform is verified against an authorized gateway.
 
 ### What exists today
 
@@ -15,9 +18,10 @@ authorized gateway.
 | `sangfor-tls` | `rustls` on the pure-Rust RustCrypto provider, the anti-MITM pin verifier, a blocking channel and a split handshake for poll-driven hosts | 7 tests over a real loopback handshake |
 | `sangfor-tun` | the `PacketDevice` seam, wintun (Windows), `/dev/net/tun` (Linux), handed-over descriptors (Android/OHOS), and an in-memory device | 12 tests, including the concurrent reader/writer contract |
 | `sangfor-host` | the event loop: `mio` readiness, bounded queues, the channel registry, effect application | 6 tests, 4 of them end to end against a fake gateway |
+| `sangfor-tunneld` | the tunnel process binary: two documents in, a device open, a running tunnel, a control protocol | 50 tests: routes and node exclusion, config validation, the protocol, argument parsing, process startup |
 | `sangfor-ffi` | the C ABI (`include/sangfor.h`), one runtime thread, effect dispatch | 3 tests driving a whole session through `extern "C"` |
 
-83 tests, `cargo fmt` and `cargo clippy -D warnings` clean.
+133 tests, `cargo fmt` and `cargo clippy -D warnings` clean.
 
 `rustls-rustcrypto` and `mio` are both pure Rust, so the whole stack
 cross-compiles with no C toolchain to `x86_64-pc-windows-msvc`,
@@ -29,17 +33,26 @@ build.
 Measured, with the workspace release profile (`opt-level="z"`, `lto`,
 `codegen-units=1`, `panic="abort"`, `strip`):
 
-- a binary linking **all four** crates — protocol, TLS, devices, event loop —
-  is **1.05 MB** on `x86_64-pc-windows-msvc`. That answers the size question
-  §10 raised: the `.appex` budget is ~50 MB.
-- `sangfor-ffi`'s `cdylib`, which does not link TLS because the host owns the
-  transport, is 346 KB.
+- **`sangfor-tunneld.exe` is 1.23 MB** on `x86_64-pc-windows-msvc` — a complete
+  tunnel process: protocol, TLS, devices, event loop, control channel. That
+  answers the size question §10 raised; the `.appex` budget is ~50 MB.
+- `sangfor-ffi`'s `cdylib` is 346 KB. It does not link TLS, because at that
+  level the host owns the transport.
 
 Run it locally:
 
 ```bash
-cd rust && cargo test --workspace        # 83 tests
+cd rust && cargo test --workspace        # 133 tests
 cargo clippy --workspace --all-targets --features sangfor-tun/wintun -- -D warnings
+cargo build --release -p sangfor-tunneld
+```
+
+The daemon runs with no driver and no privileges, which is what makes it
+testable on a laptop and on a CI runner:
+
+```bash
+sangfor-tunneld --dry-run --check --plan plan.json --interface Luotopia
+sangfor-tunneld --dry-run --plan - <<< "$PLAN_JSON"   # then: {"cmd":"status"}
 ```
 
 ### The relay gap the end-to-end test found
@@ -143,6 +156,14 @@ rust/
     src/channel.rs           # ByteChannel, mio registration, the Connector seam
     src/host.rs              # device pump + readiness loop + effect application
     tests/end_to_end.rs      # the whole stack against a fixture-replaying gateway
+  sangfor-tunneld/           # the tunnel process binary (see §6.1)
+    src/cli.rs               # argument parsing + usage
+    src/config.rs            # the host configuration document, validated
+    src/netconfig.rs         # route math: node exclusion, block splitting
+    src/device.rs            # device selection + the interface configurator
+    src/control.rs           # the JSON-lines control protocol
+    src/runtime.rs           # logging, the configurator thread, the run loop
+    src/main.rs              # two documents in, an exit code out
   sangfor-ffi/               # the only crate with a C ABI
     src/lib.rs               # extern "C" surface + opaque handle
     include/sangfor.h
@@ -263,8 +284,8 @@ it. So:
 | iOS | `NEPacketTunnelFlow` (Swift pumps bytes; the core never sees the utun) | `.appex` | already yes |
 | Android | `VpnService` fd | a dedicated `android:process=":vpn"` service | yes (new) |
 | OHOS | `VpnExtensionAbility` fd | the extension ability process, which already exists | yes (new) |
-| Windows | wintun, owned by `sangfor-tun` | a small daemon/service, or in-process until that lands | yes (new) |
-| Linux | `/dev/net/tun` | daemon or in-process | yes (new) |
+| Windows | wintun, owned by `sangfor-tunneld` | `sangfor-tunneld`, elevated; a service wrapper is still to come | yes (new) |
+| Linux | `/dev/net/tun` | `sangfor-tunneld` | yes (new) |
 
 iOS keeps `NEPacketTunnelFlow` on purpose. `wireguard-go` creates its own utun
 inside the extension, but that means re-implementing what
@@ -281,6 +302,53 @@ Every row except iOS runs the same `sangfor-host` loop; only the device differs,
 which is the point of the `PacketDevice` seam. iOS gets the same loop later if
 the extension ends up owning its sockets, but Phase 3 keeps Swift pumping
 `NEPacketTunnelFlow` bytes across the ABI so Apple's plumbing stays in charge.
+
+### 6.1 `sangfor-tunneld`
+
+The process that runs that loop on the four non-Apple platforms. Two documents
+in, a tunnel out:
+
+| Document | Written by | Carries |
+|---|---|---|
+| session plan | the Dart control plane | credentials, signing key, node endpoints, published resources, anti-MITM pins |
+| host config | whoever launches the process | which device to open, the interface name, which routes and DNS servers to install |
+
+The split is the important part. *Which destinations belong in the tunnel* is a
+product decision: the app derives it from the gateway's published resources
+**and** from the user's route policy and custom entries. Porting that here would
+mean a second implementation of a rule users can change in a settings screen,
+and the two would drift. So the app keeps computing CIDRs and hands them over;
+`--route` appends to them.
+
+Two things the daemon does own:
+
+- **Node exclusion.** Before applying anything it removes the gateway's own node
+  endpoints from every route, splitting a block rather than dropping it: a /8
+  with a node at `10.1.2.3` survives as 24 narrower blocks with one hole in it.
+  A route that captures a node sends the tunnel's traffic into the tunnel, and
+  the deadlock that results presents as a network outage. The control plane
+  already excludes them; this is the last place a mistake can still be caught,
+  and it is logged when it fires.
+- **Ordering.** The interface is configured only after the gateway assigns a
+  virtual IP, on its own thread. Configuring early means guessing an address the
+  plane will not use, and packets the plane emits carry the assigned one as
+  their source — an interface with a different address makes the stack drop them
+  as martians. `netsh` is slow enough that running it on the host loop would
+  stall every flow.
+
+Control is JSON lines on stdin, replies on stdout, logs on stderr:
+`{"cmd":"status"}` for counters, `{"cmd":"ping"}` for liveness, `{"cmd":"stop"}`
+to end the session. Exit codes are 0 clean, 1 could not run, 2 the session died
+and the control plane must log in again. A service with no stdin needs a named
+pipe or socket instead; `Command::parse` and `reply` are transport-free so that
+swap does not touch the protocol.
+
+Verified by running the shipped binary: `--dry-run --check` decodes a plan,
+opens a loopback device, and exits 0 with no driver and no elevation, and a live
+`--dry-run` session answers `ping`, returns a `status` snapshot whose
+`connectFailures` counter shows it really tried to reach the node, reports a
+malformed command as an error rather than silence, and exits 0 on `stop`. CI runs
+all three.
 
 ## 7. The session plan is the contract
 
@@ -337,12 +405,18 @@ implementation intact:
    the ABI instead of `SangforNativeDataPlane`. `runtimeMode` gains
    `extensionRust`; `extensionNative` (Swift) stays selectable, so a bad build
    is a flag flip, not a revert. Needs a Mac and an authorized gateway.
-4. **Phase 4 — Windows.** A daemon binary owning wintun; the app becomes a
-   client. Everything the daemon needs now exists — `sangfor-host` plus
-   `sangfor-tun/wintun` — so this is a `main()`, a service wrapper, and the
-   `netsh` configuration the device already implements. The biggest
-   user-visible win: no elevation for the data plane, and the tunnel outlives
-   the app.
+4. **Phase 4 — Windows.** Mostly done: `sangfor-tunneld` opens wintun, waits
+   for the virtual IP, configures the interface with the node endpoints
+   excluded, runs the tunnel, and serves the control protocol. Verified by
+   running the binary (see §6.1), but **not** yet against a real gateway,
+   because that needs elevation and a staged `wintun.dll`. Still open:
+   - a Windows service wrapper, so the process is started by the SCM and
+     restarts on failure rather than being a child of the app;
+   - the app-side client — a Dart `Process` + JSON-lines driver replacing
+     `WintunDevice` in `vpn_connection_service.dart`, behind a flag;
+   - a prebuilt artifact for the `.exe`, following §8.
+   The user-visible win once those land: no elevation prompt for the data plane,
+   and the tunnel outlives the app.
 5. **Phase 5 — Android/OHOS.** Move the fd consumer into the service process.
    Dart keeps `VpnTunnelMode.system` on the old path until on-device verified.
 6. **Phase 6 — prebuilts, then delete.** The release pipeline from §8, and then
