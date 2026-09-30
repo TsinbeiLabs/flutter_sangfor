@@ -79,7 +79,13 @@ impl TunDevice {
             _padding: [0; 14],
         };
         for (index, byte) in bytes.iter().enumerate() {
-            request.name[index] = i8::try_from(*byte).unwrap_or(b'?' as i8);
+            // `c_char`, not `i8`: `char` is signed on x86-64 Linux and
+            // *unsigned* on aarch64, so a hardcoded `i8` compiles on one and
+            // not the other. Same class of difference as `TUNSETIFF` above, and
+            // it survived for the same reason -- CI only cross-compiled this
+            // module for x86-64. Interface names are ASCII, so the fallback is
+            // for a caller that passed something else.
+            request.name[index] = libc::c_char::try_from(*byte).unwrap_or(b'?' as libc::c_char);
         }
         // SAFETY: `TUNSETIFF` reads `sizeof(ifreq)` from `request` and writes
         // the assigned name back into the same buffer, which outlives the call.

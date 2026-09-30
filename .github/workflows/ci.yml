@@ -99,10 +99,20 @@ jobs:
       # descriptor code is actually compiled -- `ioctl`'s request parameter is
       # `c_ulong` on glibc and `c_int` on musl, and only building both catches
       # that.
+      #
+      # `tun` is built for an aarch64 target too, and not only an x86-64 one:
+      # `c_char` is `i8` on x86-64 Linux and `u8` on aarch64, so a module that
+      # hardcodes one of them compiles happily here and fails on every ARM
+      # machine. That is not hypothetical -- `tun.rs` did exactly that, and
+      # nothing caught it until a release build tried to produce an artifact.
       - name: Cross-compile (no C toolchain required)
         run: |
-          rustup target add aarch64-linux-android aarch64-unknown-linux-ohos x86_64-unknown-linux-musl
+          rustup target add aarch64-linux-android aarch64-unknown-linux-ohos \
+            x86_64-unknown-linux-musl aarch64-unknown-linux-musl
           cargo build --release --target x86_64-unknown-linux-musl \
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun \
+            --features sangfor-tun/tun
+          cargo build --release --target aarch64-unknown-linux-musl \
             -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun \
             --features sangfor-tun/tun
           cargo build --release --target aarch64-linux-android \
