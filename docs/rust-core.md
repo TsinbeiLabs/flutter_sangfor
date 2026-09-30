@@ -338,17 +338,74 @@ Two things the daemon does own:
 
 Control is JSON lines on stdin, replies on stdout, logs on stderr:
 `{"cmd":"status"}` for counters, `{"cmd":"ping"}` for liveness, `{"cmd":"stop"}`
-to end the session. Exit codes are 0 clean, 1 could not run, 2 the session died
-and the control plane must log in again. A service with no stdin needs a named
-pipe or socket instead; `Command::parse` and `reply` are transport-free so that
-swap does not touch the protocol.
+to end the session, each with an optional `token`. Exit codes are 0 clean, 1 could
+not run, 2 the session died and the control plane must log in again. The protocol
+is served on stdin for a child process and on a token-gated loopback socket for
+anything without one; `Request::parse` and `reply` are transport-free, so adding
+the socket did not change a line of the protocol.
 
 Verified by running the shipped binary: `--dry-run --check` decodes a plan,
-opens a loopback device, and exits 0 with no driver and no elevation, and a live
-`--dry-run` session answers `ping`, returns a `status` snapshot whose
-`connectFailures` counter shows it really tried to reach the node, reports a
-malformed command as an error rather than silence, and exits 0 on `stop`. CI runs
-all three.
+opens a loopback device, and exits 0 with no driver and no elevation; a live
+`--dry-run` session answers `ping`, returns a `status` snapshot, refuses a
+tokenless `status`, and exits 0 on `stop`. Rust subprocess tests, the Dart client
+test, and `tool/verify_tunneld.ps1` all run that exchange. CI runs all three.
+
+### 6.2 The service wrapper is not written yet, and why
+
+The remaining Phase 4 win is removing elevation from the app: the runner's
+manifest is `asInvoker`, so `WintunCreateAdapter` fails outright today and the
+whole app has to be run as administrator to use the VPN on Windows. A service
+running as LocalSystem creates the adapter itself and the app never needs a
+prompt.
+
+The obvious design is a loopback socket, which already exists, plus an
+always-running service the app talks to. It does not survive contact with the
+threat model:
+
+- A loopback socket cannot identify its peer. `GetNamedPipeClientProcessId` has no
+  TCP equivalent, so any local process that has the token can start, stop, or
+  **replace** a session.
+- The token cannot be made per-user, because the service is installed once and
+  runs as LocalSystem while the app runs as whoever is logged in. Storing it
+  where the app can read it means storing it where any local user can read it,
+  which makes it a speed bump rather than a control.
+- What crosses that socket would be a session plan, i.e. the signing key. An
+  unauthenticated local process able to inject or replace one is a worse position
+  than the elevation prompt is.
+
+So the honest answer is a **named pipe** with the client's process identity
+checked — `GetNamedPipeClientProcessId`, then the process's user and session, and
+accept only an interactive user on the console session. That is the idiomatic
+Windows mechanism and the reason products use it. It is also roughly sixty lines
+of Win32 with a `SECURITY_DESCRIPTOR`, and none of it can be exercised without
+installing a service as administrator.
+
+Shipping that blind is the wrong trade. A broken daemon is a failed process; a
+broken *service* is something a user has to notice, diagnose, and uninstall with
+`sc delete`, and the failure mode of getting a pipe DACL wrong is either "the app
+cannot talk to it" or "anything can". Both are worse than not having it yet.
+
+What is recorded here instead, so the next step is specified rather than
+rediscovered:
+
+1. A supervisor loop in the daemon: idle → `start` with an inline plan → run one
+   session → `stop-session` → idle. The single-session lifecycle currently exits
+   the process, which is right for a child and wrong for a service.
+2. A `pipe` transport behind the same `Request`/`reply` protocol, with client
+   process validation, and the loopback socket kept for development.
+3. SCM registration via the `windows-service` crate (pure Rust, so the
+   no-C-toolchain property holds), `start= auto`, with
+   `SERVICE_START_PENDING`/`RUNNING`/`STOP_PENDING` transitions and a checkpoint,
+   because a service that reports `RUNNING` before the tunnel is up gets killed by
+   the SCM's start timeout.
+4. `--install-service` / `--uninstall-service` generating the `sc create` and
+   `sc failure` command lines as data, so they can be unit-tested and printed for
+   a human to run once, elevated, and see exactly what they do.
+
+Steps 1 and 4 are testable without elevation and are worth doing on their own: a
+supervisor lets one long-lived elevated daemon serve repeated connect/disconnect
+cycles, which is what the app actually wants even before a service exists.
+
 
 ## 7. The session plan is the contract
 
@@ -370,10 +427,14 @@ from a live gateway.
 
 Follow the pattern the app already runs for `key_obfuscator`:
 
-1. `rust/` builds `staticlib` (Apple) and `cdylib` (everything else) with
+1. `rust/` builds `staticlib` (Apple) and `cdylib`/binary (everything else) with
    `opt-level="z"`, `lto`, `codegen-units=1`, `panic="abort"`, `strip`.
 2. CI publishes per-target artifacts to a GitHub release; consumers fetch them
    with a sha256-pinned lock file (`prebuilts.lock.json` in the app today).
+   `.github/workflows/release-tunneld.yml` does this for `sangfor-tunneld` —
+   windows x64/arm64 and linux x64/arm64, tag- or dispatch-triggered, and it
+   writes the lock fragment rather than leaving it to be transcribed. Apple
+   targets and the `cdylib` for the `.appex` are not in it yet.
 3. Apple targets build on a macOS runner.
 4. Xcode links the static lib into **both** `Runner` and
    `SangforPacketTunnel.appex` with `-force_load`, exactly as
@@ -407,16 +468,18 @@ implementation intact:
    is a flag flip, not a revert. Needs a Mac and an authorized gateway.
 4. **Phase 4 — Windows.** Mostly done: `sangfor-tunneld` opens wintun, waits
    for the virtual IP, configures the interface with the node endpoints
-   excluded, runs the tunnel, and serves the control protocol. Verified by
-   running the binary (see §6.1), but **not** yet against a real gateway,
-   because that needs elevation and a staged `wintun.dll`. Still open:
-   - a Windows service wrapper, so the process is started by the SCM and
-     restarts on failure rather than being a child of the app;
-   - the app-side client — a Dart `Process` + JSON-lines driver replacing
-     `WintunDevice` in `vpn_connection_service.dart`, behind a flag;
-   - a prebuilt artifact for the `.exe`, following §8.
-   The user-visible win once those land: no elevation prompt for the data plane,
-   and the tunnel outlives the app.
+   excluded, runs the tunnel, and serves the control protocol over stdin *and*
+   a token-gated loopback socket. The Dart client
+   (`flutter_sangfor/lib/src/tunnel_daemon.dart`) launches and drives it, and a
+   test runs that exchange against the real binary in CI. `VERIFY.md` and
+   `tool/verify_tunneld.ps1` check a build on a real machine. Still open:
+   - **the service wrapper** — see §6.2 for why it is not written yet;
+   - the app-side switch in `vpn_connection_service.dart`, replacing
+     `WintunDevice` with the daemon behind a flag;
+   - consuming the release artifacts from `.github/workflows/release-tunneld.yml`
+     in the app's `prebuilts.lock.json`.
+   And nothing has met a real gateway yet, which needs elevation and a staged
+   `wintun.dll`.
 5. **Phase 5 — Android/OHOS.** Move the fd consumer into the service process.
    Dart keeps `VpnTunnelMode.system` on the old path until on-device verified.
 6. **Phase 6 — prebuilts, then delete.** The release pipeline from §8, and then

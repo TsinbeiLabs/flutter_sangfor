@@ -1,0 +1,150 @@
+name: Release sangfor-tunneld
+
+# Publishes the tunnel daemon so consuming apps can fetch a pinned artifact
+# instead of requiring a Rust toolchain on every contributor's machine and every
+# build agent. Same shape as the `key_obfuscator` prebuilts the app already
+# fetches: one asset per target, sha256 recorded in a lock file.
+#
+# Deliberately tag- or dispatch-triggered, never on push. A release is a
+# publishing action, and building one per commit would produce artifacts nobody
+# can reference stably.
+
+on:
+  push:
+    tags:
+      - 'tunneld-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish under (created if absent)'
+        required: true
+        default: 'tunneld-v0.1.0'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows is the platform with the elevation problem the daemon
+          # solves, so it is the one that has to work first.
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            asset: sangfor-tunneld-windows-x64.exe
+            features: sangfor-tun/wintun
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            asset: sangfor-tunneld-windows-arm64.exe
+            features: sangfor-tun/wintun
+          # Linux has no elevation problem to solve, but the same binary runs
+          # there and a daemon is still how the tunnel outlives the app.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            asset: sangfor-tunneld-linux-x64
+            features: sangfor-tun/tun
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            asset: sangfor-tunneld-linux-arm64
+            features: sangfor-tun/tun
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # The workspace release profile is already size-tuned (opt-level="z", lto,
+      # codegen-units=1, panic="abort", strip), so there is nothing to pass here.
+      - name: Build
+        run: >-
+          cargo build --release --target ${{ matrix.target }}
+          -p sangfor-tunneld --features ${{ matrix.features }}
+
+      - name: Stage the artifact
+        shell: bash
+        run: |
+          mkdir -p ../dist
+          binary="sangfor-tunneld"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then binary="sangfor-tunneld.exe"; fi
+          cp "target/${{ matrix.target }}/release/$binary" "../dist/${{ matrix.asset }}"
+
+      - name: Record the checksum
+        shell: bash
+        run: |
+          cd ../dist
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          cat "${{ matrix.asset }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write the lock fragment
+        # This is what goes into a consuming app's prebuilts.lock.json. Printed
+        # into the job log and committed as an asset so the update is a copy
+        # rather than a transcription.
+        run: |
+          {
+            echo '['
+            first=1
+            for checksum in dist/*.sha256; do
+              asset=$(basename "$checksum" .sha256)
+              digest=$(awk '{print $1}' "$checksum")
+              if [ "$first" -eq 0 ]; then echo ','; fi
+              first=0
+              printf '  {\n    "asset": "%s",\n    "sha256": "%s"\n  }' "$asset" "$digest"
+            done
+            echo ''
+            echo ']'
+          } > dist/prebuilts.fragment.json
+          cat dist/prebuilts.fragment.json
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: sangfor-tunneld ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/sangfor-tunneld-*
+            dist/prebuilts.fragment.json
+          body: |
+            The tunnel daemon: `sangfor-host` plus a platform packet device, in
+            one binary. Run `sangfor-tunneld --help` for the flags, and see
+            `rust/sangfor-tunneld/VERIFY.md` for how to check a build against a
+            real gateway.
+
+            **Windows needs `wintun.dll` beside the executable.** It is not
+            bundled, because the only license-compliant distribution is the
+            signed DLL from https://www.wintun.net/. The consuming app's build
+            already stages it for the Flutter runner; the daemon needs the same
+            copy. `prebuilts.fragment.json` has the checksums for a lock file.
