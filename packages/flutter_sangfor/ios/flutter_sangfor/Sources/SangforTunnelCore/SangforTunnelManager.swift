@@ -30,6 +30,18 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
   case tunnelStartFailed(String)
   /// Applying the tunnel network settings failed.
   case networkSettingsFailed(String)
+  /// The gateway rejected the tunnel handshake; the session is gone.
+  case tunnelAuthFailed(String)
+  /// A per-flow authentication failed.
+  case flowAuthFailed(String)
+  /// A flow never authenticated in time.
+  case flowAuthTimeout(String)
+  /// The gateway stopped answering heartbeats.
+  case heartbeatTimeout(Int)
+  /// The transport closed or failed.
+  case channelClosed(String)
+  /// The session plan could not be used.
+  case invalidPlan(String)
 
   public var description: String {
     switch self {
@@ -43,7 +55,25 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
       "Starting the VPN tunnel failed: \(detail)"
     case .networkSettingsFailed(let detail):
       "Applying tunnel network settings failed: \(detail)"
+    case .tunnelAuthFailed(let detail):
+      "L3 tunnel auth failed: \(detail)"
+    case .flowAuthFailed(let detail):
+      "flow auth failed: \(detail)"
+    case .flowAuthTimeout(let detail):
+      "flow auth timed out: \(detail)"
+    case .heartbeatTimeout(let misses):
+      "heartbeat timed out after \(misses) misses"
+    case .channelClosed(let detail):
+      "tunnel channel closed: \(detail)"
+    case .invalidPlan(let detail):
+      "invalid session plan: \(detail)"
     }
+  }
+
+  /// True when the session itself is unusable and the Runner must re-login.
+  public var isFatalForSession: Bool {
+    if case .tunnelAuthFailed = self { return true }
+    return false
   }
 
   /// Stable machine-readable code mirrored on the Dart side.
@@ -54,6 +84,12 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
     case .managerLoadFailed: "managerLoadFailed"
     case .tunnelStartFailed: "tunnelStartFailed"
     case .networkSettingsFailed: "networkSettingsFailed"
+    case .tunnelAuthFailed: "tunnelAuthFailed"
+    case .flowAuthFailed: "flowAuthFailed"
+    case .flowAuthTimeout: "flowAuthTimeout"
+    case .heartbeatTimeout: "heartbeatTimeout"
+    case .channelClosed: "channelClosed"
+    case .invalidPlan: "invalidPlan"
     }
   }
 }
