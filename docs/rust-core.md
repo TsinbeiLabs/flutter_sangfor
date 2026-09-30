@@ -456,22 +456,30 @@ Follow the pattern the app already runs for `key_obfuscator`:
 1. `rust/` builds `staticlib` (Apple) and `cdylib`/binary (everything else) with
    `opt-level="z"`, `lto`, `codegen-units=1`, `panic="abort"`, `strip`.
 2. CI publishes per-target artifacts to a GitHub release; consumers fetch them
-   with a sha256-pinned lock file (`prebuilts.lock.json` in the app today).
-   `.github/workflows/release-tunneld.yml` does this for `sangfor-tunneld` —
-   windows x64/arm64 and linux x64/arm64, tag- or dispatch-triggered, and it
-   writes the lock fragment rather than leaving it to be transcribed. Apple
-   targets and the `cdylib` for the `.appex` are not in it yet.
+    with a sha256-pinned lock file (`prebuilts.lock.json` in the app today).
+    `.github/workflows/release-tunneld.yml` does this for `sangfor-tunneld` —
+    windows x64/arm64 and linux x64/arm64, tag-triggered on `tunneld-v*`, and it
+    writes the lock fragment rather than leaving it to be transcribed. Published
+    as `tunneld-v0.1.0`; the app fetches the Windows binaries with
+    `app/scripts/stage_tunneld.ps1`, which pins the digests and treats a
+    mismatch as fatal but a download failure as a warning, so an offline build
+    still produces a working app. Apple targets and the `cdylib` for the `.appex`
+    are not in it yet.
 3. Apple targets build on a macOS runner.
 4. Xcode links the static lib into **both** `Runner` and
    `SangforPacketTunnel.appex` with `-force_load`, exactly as
    `libkey_obfuscator.a` is linked today.
 
 Note on linkers: cross-*compiling* these crates needs nothing but `rustup target
-add`, which is what CI verifies for OHOS and Android. Cross-*linking* a `cdylib`
-for those targets needs the NDK's linker, configured the way `key_obfuscator`
-already configures it — there is deliberately no `.cargo/config.toml` in this
-workspace, because the linker belongs to the consuming app, not to the protocol
-library.
+add`, which is what CI verifies for OHOS and Android. Cross-*linking* a binary
+does need the target's toolchain, and the release workflow installs it
+(`gcc-aarch64-linux-gnu` for the driver plus `libc6-dev-arm64-cross` for the
+`Scrt1.o`/`crti.o` the link wants — installing only the first gets you as far as
+the link and then fails with a message that does not name the missing package).
+Cross-linking a `cdylib` for Android or OHOS needs the NDK's linker, configured
+the way `key_obfuscator` already configures it — there is deliberately no
+`.cargo/config.toml` in this workspace, because the linker belongs to the
+consuming app, not to the protocol library.
 
 cargokit (as `fjs` uses) is the alternative for source builds during
 `flutter build`. Not adopted here: it forces a Rust toolchain plus every target
@@ -495,19 +503,24 @@ implementation intact:
 4. **Phase 4 — Windows.** Mostly done: `sangfor-tunneld` opens wintun, waits
    for the virtual IP, configures the interface with the node endpoints
    excluded, runs the tunnel, and serves the control protocol over stdin *and*
-   a token-gated loopback socket. The Dart client
-   (`flutter_sangfor/lib/src/tunnel_daemon.dart`) launches and drives it, and a
-   test runs that exchange against the real binary in CI. `VERIFY.md` and
-   `tool/verify_tunneld.ps1` check a build on a real machine. Still open:
-   - **the service wrapper** — see §6.2 for why it is not written yet;
-   - the app-side switch in `vpn_connection_service.dart`, replacing
-     `WintunDevice` with the daemon behind a flag;
-   - consuming the release artifacts from `.github/workflows/release-tunneld.yml`
-     in the app's `prebuilts.lock.json`.
-   And nothing has met a real gateway yet, which needs elevation and a staged
-   `wintun.dll`.
+   a token-gated loopback socket. It supervises, so one process serves repeated
+   connect/disconnect cycles (§6.1), and `--install` registers it as an elevated
+   logon task (§6.2). The Dart client
+   (`flutter_sangfor/lib/src/tunnel_daemon.dart`) drives it either installed or
+   as a child, and a test runs that exchange against the real binary in CI.
+   `VERIFY.md` and `tool/verify_tunneld.ps1` check a build on a real machine.
+   The app wires it in `vpn_connection_service.dart` behind
+   `--dart-define=LUOTOPIA_VPN_TUNNELD=true`, off by default, and stages the
+   binary beside the runner with `app/scripts/stage_tunneld.ps1`. Still open:
+   - a **real gateway run**, which needs elevation on the verifying machine;
+   - a **true Windows service**, if the tunnel ever has to outlive logoff — see
+     §6.2 for why the logon task is not one and what a service would need.
 5. **Phase 5 — Android/OHOS.** Move the fd consumer into the service process.
    Dart keeps `VpnTunnelMode.system` on the old path until on-device verified.
+   Note the shape differs from the desktops: Android's `VpnService` process *is*
+   the out-of-process boundary the platform keeps alive, so the core belongs
+   there in-process through the C ABI rather than in a child daemon that would
+   have to inherit the descriptor across an `exec`.
 6. **Phase 6 — prebuilts, then delete.** The release pipeline from §8, and then
    the Swift `Native/` core and the Dart data plane go away; Dart keeps
    login/resources/UI, and the golden fixtures stay as the contract test for
@@ -529,6 +542,18 @@ Phase 6, and iOS has two native modes side by side until then.
   matches the reference; only an end-to-end test proves the functions are wired
   together. `sangfor-host/tests/end_to_end.rs` exists for that reason, and any
   new protocol layer should land with a case in it.
+- **Portable types are only portable if every target compiles them.** Three
+  separate bugs in this repo were the same bug: code that was correct on the
+  architecture it was written on and wrong on another. `libc::ioctl`'s request
+  parameter is `c_ulong` on glibc and `c_int` on musl. `c_char` is `i8` on
+  x86-64 Linux and `u8` on aarch64, so `tun.rs` writing an `i8` into
+  `ifreq.name` compiled for one and not the other. And an accepted TCP socket
+  inherits non-blocking mode from its listener on Windows but not on Linux. Each
+  survived because the test matrix compiled the module for only one of the two
+  shapes. The rule this argues for: when a `cfg` or a feature gates a module,
+  CI has to build that module for *every* target where the underlying C type
+  differs — the cross-compile step now builds `sangfor-tun/tun` for an aarch64
+  target as well as an x86-64 one, which is what would have caught the second.
 - **`rustls-rustcrypto` is an alpha crate.** Less travelled than ring, and its
   API has already moved once. Pinned in `Cargo.lock`, compiled for all five
   targets on every push, and isolated behind `sangfor_host::Connector` so a

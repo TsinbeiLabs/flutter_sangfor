@@ -810,6 +810,8 @@ $daemonPath = Find-Daemon
 if (-not $daemonPath) {
   Write-Bad 'sangfor-tunneld was not found'
   Write-Info 'Build it with: cd rust; cargo build --release -p sangfor-tunneld'
+  Write-Info 'Or download a published one from the tunneld-v* releases of TsinbeiLabs/flutter_sangfor.'
+  Write-Info 'A Flutter Windows build stages one beside the runner: build\windows\x64\runner\<Config>\sangfor-tunneld.exe'
   Write-Info 'Or pass -Daemon <path>.'
   exit 1
 }
