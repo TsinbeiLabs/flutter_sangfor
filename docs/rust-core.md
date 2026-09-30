@@ -426,6 +426,15 @@ half-consumed escaping it — so a path ending in `\` would otherwise swallow th
 closing quote and glue the next argument onto it. A round-trip test parses each
 rendered command back into argv and compares.
 
+The task records an absolute path, which is the one thing about it that can rot:
+an app update that relocates the executable leaves the task pointing at nothing,
+and it then fails at every logon with no window and no log entry a user would
+ever see. So `--install` writes `installedFrom` into the configuration, the
+daemon warns at startup when it is running from somewhere else, and the Dart
+client's `diagnoseUnavailable` checks whether the recorded file still exists
+before it concludes anything about the socket. That covers a *replaced* binary;
+a *deleted* one leaves no process to warn, so it is the app that reports it.
+
 A named pipe with client-process validation remains the right answer for a true
 service, and is roughly sixty lines of Win32 with a `SECURITY_DESCRIPTOR`. It is
 still not written, for the reason in the previous revision of this section: none

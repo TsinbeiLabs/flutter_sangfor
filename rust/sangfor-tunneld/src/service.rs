@@ -301,6 +301,12 @@ impl Install {
             control_port: Some(self.control_port),
             control_token: Some(token.to_string()),
             log_path: Some(self.log_path()),
+            // Recorded so a daemon started from somewhere else can say so, and
+            // so an app that cannot reach it can tell "the binary moved" from
+            // "the task has not run yet". Without it an app update that
+            // relocates the executable leaves a logon task pointing at nothing,
+            // and the only symptom is a tunnel that stops working at logon.
+            installed_from: Some(self.executable.clone()),
             ..HostConfig::default()
         }
     }
@@ -709,6 +715,13 @@ mod tests {
         assert_eq!(config.log_path, Some(install().log_path()));
         assert_eq!(config.device, DeviceKind::Wintun);
         assert_eq!(config.interface, "Luotopia");
+        assert_eq!(
+            config.installed_from,
+            Some(install().executable.clone()),
+            "the configuration records which binary it was installed from, so a \
+             relocated executable can be noticed instead of failing silently at \
+             the next logon"
+        );
     }
 
     #[test]

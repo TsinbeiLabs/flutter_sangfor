@@ -75,6 +75,7 @@ class SangforTunnelHostConfig {
     this.controlPort,
     this.controlToken,
     this.logPath,
+    this.installedFrom,
   });
 
   /// Which packet device to open.
@@ -135,6 +136,14 @@ class SangforTunnelHostConfig {
   /// Where the daemon writes its log. `null` means stderr.
   final String? logPath;
 
+  /// The executable path this configuration was installed from, recorded by the
+  /// daemon's `--install`.
+  ///
+  /// Nothing uses it to decide how to run; it exists so a caller that cannot
+  /// reach the daemon can tell "the binary moved" from "the task has not run
+  /// yet". See [SangforTunnelInstalledDaemon.diagnoseUnavailable].
+  final String? installedFrom;
+
   /// The document as the daemon parses it.
   Map<String, Object?> toJson() => <String, Object?>{
         'device': device.wireName,
@@ -152,6 +161,11 @@ class SangforTunnelHostConfig {
         if (controlPort != null) 'controlPort': controlPort,
         if (controlToken != null) 'controlToken': controlToken,
         if (logPath != null) 'logPath': logPath,
+        // Emitted only when set, which an app never does: this field belongs to
+        // the process that was installed, and a per-session document claiming a
+        // different one would be nonsense. The daemon ignores it in a
+        // per-session document regardless.
+        if (installedFrom != null) 'installedFrom': installedFrom,
       };
 
   /// Encodes the document for writing to disk.
@@ -190,6 +204,7 @@ class SangforTunnelHostConfig {
       controlPort: (json['controlPort'] as num?)?.toInt(),
       controlToken: json['controlToken'] as String?,
       logPath: json['logPath'] as String?,
+      installedFrom: json['installedFrom'] as String?,
     );
   }
 }
@@ -700,6 +715,82 @@ class SangforTunnelInstalledDaemon implements SangforTunnelDaemon {
       return null;
     }
     return SangforTunnelInstalledDaemon._(client, where);
+  }
+
+  /// The name the installer gives the logon task.
+  ///
+  /// Duplicated from `DEFAULT_NAME` in the Rust `service` module. It is a name
+  /// rather than a protocol detail, so it changes only if the installer changes,
+  /// and the cost of drift is a hint that names the wrong task.
+  static const String defaultTaskName = 'SangforTunnel';
+
+  /// Explains why [connect] would return null, for a log or a dialog.
+  ///
+  /// [connect] collapses every failure to null on purpose — a caller that has no
+  /// daemon should fall back to the data plane it already had, not surface an
+  /// error. But when the flag that asks for a daemon is *on*, "null" is the whole
+  /// diagnosis the user gets, and the causes need very different fixes: nothing
+  /// installed, a configuration this version cannot read, an app update that
+  /// moved the binary out from under the logon task, and a task that has not run
+  /// since it was installed.
+  ///
+  /// Returns null when a daemon *is* reachable, so it is safe to call
+  /// unconditionally before giving up.
+  static Future<String?> diagnoseUnavailable({
+    Directory? directory,
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final where = directory ?? defaultDirectory();
+    if (where == null) {
+      return 'there is no per-user profile directory to install a daemon into';
+    }
+    final file = File(
+      '${where.path}${Platform.pathSeparator}$hostConfigFileName',
+    );
+    if (!await file.exists()) {
+      return 'no daemon is installed (expected ${file.path}); run '
+          '`sangfor-tunneld --install` once from an elevated shell';
+    }
+
+    final SangforTunnelHostConfig config;
+    try {
+      config = SangforTunnelHostConfig.decode(
+        jsonDecode(await file.readAsString()) as Map<String, Object?>,
+      );
+    } on Object catch (error) {
+      return '${file.path} could not be read ($error); it was probably written '
+          'by a different version of sangfor-tunneld -- re-run --install';
+    }
+
+    // Checked before the socket, because it distinguishes the one cause a retry
+    // can never fix: the installer recorded an absolute path, and an app update
+    // that relocated the executable leaves the logon task pointing at nothing.
+    // The task then fails at every logon with no window and no log entry the
+    // user would ever see.
+    final installedFrom = config.installedFrom;
+    if (installedFrom != null && !File(installedFrom).existsSync()) {
+      return 'the installed daemon at $installedFrom is gone -- the app was '
+          'probably updated or moved, so the $defaultTaskName logon task points '
+          'at nothing; re-run `sangfor-tunneld --install` from an elevated shell';
+    }
+
+    final port = config.controlPort ?? defaultControlPort;
+    try {
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        port,
+        timeout: timeout,
+      );
+      await socket.close();
+      // Something answered, so there is nothing to diagnose.
+      return null;
+    } on Object {
+      final log = config.logPath;
+      return 'nothing is answering on 127.0.0.1:$port. The $defaultTaskName '
+          'logon task may not have run since it was installed -- start it with '
+          '`schtasks /Run /TN $defaultTaskName`'
+          '${log == null ? '' : ' -- and read $log for why it stopped'}';
+    }
   }
 
   @override

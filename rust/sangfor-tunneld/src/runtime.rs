@@ -276,6 +276,56 @@ impl Session {
     }
 }
 
+/// Logs a warning when this binary is not the one the configuration says it was
+/// installed from.
+///
+/// What this catches: a daemon started from one path using a configuration
+/// written for another — a copied binary, a development build pointed at an
+/// installed configuration, or an installer that relocated the executable and
+/// left the old one behind. The two then disagree about what `--install` set up,
+/// and nothing else says so.
+///
+/// What it cannot catch: an app update that *deleted* the old path. Then the
+/// logon task fails to start anything, so there is no process here to warn.
+/// That case belongs to the app, which can see both the recorded path and
+/// whether a file is still there — see `SangforTunnelInstalledDaemon
+/// .diagnoseUnavailable` on the Dart side.
+fn warn_if_relocated(config: &DaemonConfig, log: &Logger) {
+    let Some(installed_from) = config.installed_from.as_deref() else {
+        return;
+    };
+    let Ok(current) = std::env::current_exe() else {
+        return;
+    };
+    if same_path(&current, installed_from) {
+        return;
+    }
+    log.line(&format!(
+        "WARNING: running from {} but this configuration was installed from {}; the two \
+         disagree about which binary the logon task starts, so re-run --install from an \
+         elevated shell",
+        current.display(),
+        installed_from.display()
+    ));
+}
+
+/// Compares two paths, canonicalizing when both can be.
+///
+/// A bare `==` produces false warnings on Windows, where the same file can be
+/// reached as `C:\...`, `\\?\C:\...`, and with either casing — and a warning
+/// that fires on every start of a correctly installed daemon teaches people to
+/// ignore the log, which is worse than not printing it.
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        // One of them does not resolve, so there is nothing better to compare.
+        _ => false,
+    }
+}
+
 /// Runs the process: a control loop that starts and ends sessions.
 ///
 /// [initial] is the session `--plan` asked for, if any. Whether or not it is
@@ -291,6 +341,7 @@ pub fn supervise(config: DaemonConfig, initial: Option<InitialSession>) -> Exit 
         .log_path
         .as_deref()
         .map_or_else(Logger::stderr, Logger::file);
+    warn_if_relocated(&config, &log);
 
     let snapshot = Arc::new(Mutex::new(Snapshot::default()));
     let running = Arc::new(AtomicBool::new(false));
@@ -817,6 +868,7 @@ fn now_ms() -> Millis {
 mod tests {
     use super::*;
     use crate::config::DeviceKind;
+    use std::path::PathBuf;
 
     /// A plan that names a documentation-range node, so a session comes up and
     /// then fails to connect. These tests are about the process, not the
@@ -1084,6 +1136,133 @@ mod tests {
 
         assert!(ask(&supervisor, r#"{"cmd":"stopSession"}"#).ok);
         assert!(!session_running(&supervisor), "and the process outlives it");
+    }
+
+    #[test]
+    fn path_comparison_tolerates_a_redundant_component() {
+        let here = std::env::current_exe().expect("this test runs from a binary");
+        assert!(same_path(&here, &here));
+
+        // The detour has to go through *directories*: `binary/../binary` does
+        // not resolve on any platform, because traversal requires every
+        // component before `..` to be a directory. An earlier version of this
+        // test used that, and the one before it used `dir/./binary` -- which Rust
+        // collapses on Windows, so the two "different" spellings compared equal
+        // and the assertion proved nothing. Up and back down is a real detour in
+        // the string on both platforms.
+        let parent = here
+            .parent()
+            .expect("a binary is not at the filesystem root");
+        let directory = parent
+            .file_name()
+            .expect("a binary's directory is not a filesystem root");
+        let detour = parent
+            .join("..")
+            .join(directory)
+            .join(here.file_name().expect("a binary has a file name"));
+        assert_ne!(
+            detour, here,
+            "the two spellings differ, so this is not a no-op comparison"
+        );
+        assert!(
+            same_path(&here, &detour),
+            "{here:?} and {detour:?} name the same file"
+        );
+
+        assert!(
+            !same_path(&here, Path::new("Z:/absent/sangfor-tunneld")),
+            "an absent path is not this one"
+        );
+        assert!(!same_path(Path::new("a"), Path::new("b")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_comparison_tolerates_the_spellings_windows_gives_one_file() {
+        // The case the warning exists to avoid: `current_exe` and a path recorded
+        // by an installer can reach the same file as `C:\...`, `\\?\C:\...`, and
+        // in either case. Warning on every start of a correctly installed daemon
+        // would teach people to ignore the log.
+        let here = std::env::current_exe().expect("this test runs from a binary");
+        let plain = here.display().to_string();
+
+        let verbatim = format!(r"\\?\{plain}");
+        assert!(
+            same_path(&here, Path::new(&verbatim)),
+            "{verbatim} is the same file as {plain}"
+        );
+
+        let uppercase = plain.to_uppercase();
+        assert!(
+            same_path(&here, Path::new(&uppercase)),
+            "NTFS is case-insensitive, so {uppercase} is the same file"
+        );
+    }
+
+    #[test]
+    fn a_daemon_run_from_elsewhere_than_it_was_installed_says_so() {
+        // Captured rather than asserted on stderr: the warning goes through the
+        // logger, so the test reads what the logger wrote.
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let log = logger_into(Arc::clone(&buffer));
+
+        warn_if_relocated(
+            &DaemonConfig {
+                installed_from: Some(PathBuf::from("Z:/moved/away/sangfor-tunneld")),
+                ..loopback_config(0)
+            },
+            &log,
+        );
+        let lines = String::from_utf8(buffer.lock().expect("lockable").clone()).expect("utf-8");
+        assert!(lines.contains("WARNING"), "it warns: {lines}");
+        assert!(
+            lines.contains("Z:/moved/away/sangfor-tunneld")
+                || lines.contains("Z:\\moved\\away\\sangfor-tunneld"),
+            "and names the path it disagrees with: {lines}"
+        );
+        assert!(
+            lines.contains("--install"),
+            "and says what to do about it: {lines}"
+        );
+    }
+
+    #[test]
+    fn a_daemon_run_from_where_it_was_installed_stays_quiet() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let log = logger_into(Arc::clone(&buffer));
+        warn_if_relocated(
+            &DaemonConfig {
+                installed_from: Some(std::env::current_exe().expect("a path")),
+                ..loopback_config(0)
+            },
+            &log,
+        );
+        // And so does a configuration with no record at all, which is every
+        // configuration not written by `--install`: a child process launched by
+        // the app has nothing to disagree with.
+        warn_if_relocated(&loopback_config(0), &log);
+
+        let lines = String::from_utf8(buffer.lock().expect("lockable").clone()).expect("utf-8");
+        assert!(lines.is_empty(), "nothing to warn about: {lines}");
+    }
+
+    /// A [`Logger`] that appends to [buffer] instead of stderr.
+    fn logger_into(buffer: Arc<Mutex<Vec<u8>>>) -> Arc<Logger> {
+        /// The `Write` half of a shared buffer, so a `Logger` can be pointed at
+        /// memory.
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.lock().expect("lockable").extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        Arc::new(Logger {
+            sink: Mutex::new(Box::new(Sink(buffer))),
+        })
     }
 
     #[test]

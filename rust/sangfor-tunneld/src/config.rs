@@ -128,6 +128,22 @@ pub struct HostConfig {
     /// Where to write JSON status lines. `None` logs to stderr.
     #[serde(default)]
     pub log_path: Option<PathBuf>,
+
+    /// The executable path this configuration was installed from, recorded by
+    /// `--install`.
+    ///
+    /// Not configuration in the sense the fields above are: nothing reads it to
+    /// decide how to run. It exists so a daemon that starts from a *different*
+    /// path than the one it was installed from can say so, and so an app that
+    /// cannot reach the daemon can tell "the binary moved" from "the task has
+    /// not run yet". An app update that relocates the executable otherwise
+    /// leaves a logon task pointing at a path that no longer exists, and the
+    /// only symptom is a tunnel that silently stops working at the next logon.
+    ///
+    /// Process-owned: [`Self::for_session`] keeps it, because a per-session
+    /// document has no business claiming where the daemon was installed from.
+    #[serde(default)]
+    pub installed_from: Option<PathBuf>,
 }
 
 fn default_interface() -> String {
@@ -168,6 +184,7 @@ impl Default for HostConfig {
             control_port: None,
             control_token: None,
             log_path: None,
+            installed_from: None,
         }
     }
 }
@@ -508,6 +525,44 @@ mod tests {
             "the process's policy survives"
         );
         assert_eq!(effective.connect_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn a_per_session_configuration_cannot_claim_a_different_install_path() {
+        // `installedFrom` is how a daemon notices it is not the binary the logon
+        // task meant to start. Letting a per-session document overwrite it would
+        // let whoever can reach the control socket silence that check.
+        let process = HostConfig {
+            installed_from: Some(PathBuf::from("/opt/luotopia/sangfor-tunneld")),
+            ..HostConfig::default()
+        };
+        let session = HostConfig {
+            installed_from: Some(PathBuf::from("/tmp/attacker")),
+            routes: vec!["10.1.0.0/16".to_string()],
+            ..HostConfig::default()
+        };
+        let effective = process.for_session(session);
+        assert_eq!(
+            effective.installed_from,
+            Some(PathBuf::from("/opt/luotopia/sangfor-tunneld")),
+            "the process keeps its own install path"
+        );
+        assert_eq!(
+            effective.routes,
+            vec!["10.1.0.0/16"],
+            "and the session's routes"
+        );
+    }
+
+    #[test]
+    fn a_configuration_written_before_installed_from_existed_still_parses() {
+        // `--install` writes this document once and it outlives upgrades, so a
+        // daemon built after the field was added must still read one written
+        // before it. `deny_unknown_fields` makes the opposite direction an
+        // error, which is why this direction is the one worth pinning.
+        let config = HostConfig::decode(br#"{"controlPort":7166}"#).expect("decodes");
+        assert_eq!(config.control_port, Some(7166));
+        assert!(config.installed_from.is_none());
     }
 
     #[test]

@@ -1,3 +1,16 @@
+## 0.0.10
+
+* `SangforTunnelInstalledDaemon.diagnoseUnavailable()` explains *why* there is
+  no daemon, instead of the bare `null` that `connect()` returns so callers can
+  fall back quietly. The causes need different fixes and look identical from the
+  outside: nothing installed, a configuration written by another version, an app
+  update that moved the executable out from under the logon task, and a task
+  that has not run since it was installed. Returns `null` when a daemon *is*
+  reachable, so it is safe to call unconditionally.
+* `SangforTunnelHostConfig.installedFrom` carries the path the daemon's
+  `--install` recorded. The daemon warns at startup when it is running from
+  somewhere else, which is what makes a relocated install visible rather than a
+  tunnel that silently stops working at the next logon.
 ## 0.0.9
 
 * Add a client for `sangfor-tunneld`, the process that runs the Rust data plane

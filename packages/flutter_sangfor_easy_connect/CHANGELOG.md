@@ -1,3 +1,6 @@
+## 0.0.10
+
+* Lockstep release with `flutter_sangfor` 0.0.10.
 ## 0.0.9
 
 * Lockstep release with `flutter_sangfor` 0.0.9.

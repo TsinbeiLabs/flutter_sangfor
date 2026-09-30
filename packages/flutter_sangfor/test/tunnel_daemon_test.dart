@@ -217,6 +217,11 @@ void main() {
         'controlPort',
         'controlToken',
         'logPath',
+        // An app never sets this: it belongs to the process that was installed,
+        // and a per-session document claiming a different one would be
+        // nonsense. The daemon ignores it in a per-session document anyway, but
+        // sending it would be a lie in both directions.
+        'installedFrom',
       ]) {
         expect(json.containsKey(key), isFalse, reason: '$key should be absent');
       }
@@ -661,6 +666,7 @@ void main() {
         controlPort: 7166,
         controlToken: 's3cret-token',
         logPath: r'C:\Users\alice\AppData\Local\sangfor-tunneld\tunneld.log',
+        installedFrom: r'C:\Program Files\Luotopia\sangfor-tunneld.exe',
       );
       final decoded = SangforTunnelHostConfig.decode(
         jsonDecode(original.encode()) as Map<String, Object?>,
@@ -670,6 +676,9 @@ void main() {
       expect(decoded.device, SangforTunnelDevice.wintun);
       expect(decoded.interface, 'Luotopia');
       expect(decoded.logPath, original.logPath);
+      expect(decoded.installedFrom, original.installedFrom,
+          reason: 'the app reads this back to tell a moved binary from a '
+              'task that has not run');
     });
 
     test('tolerates a field this version does not model', () {
@@ -811,6 +820,134 @@ void main() {
       expect(commands, contains('stopSession'));
       expect(commands, isNot(contains('stop')),
           reason: 'the process is not ours to end');
+    });
+  });
+
+  group('SangforTunnelInstalledDaemon.diagnoseUnavailable', () {
+    /// A scratch directory standing in for the install location, with [config]
+    /// written into it when given.
+    Future<Directory> installDir([SangforTunnelHostConfig? config]) async {
+      final directory =
+          await Directory.systemTemp.createTemp('sangfor-diagnose');
+      addTearDown(() => directory.delete(recursive: true));
+      if (config != null) {
+        await File(
+          '${directory.path}${Platform.pathSeparator}'
+          '${SangforTunnelInstalledDaemon.hostConfigFileName}',
+        ).writeAsString(config.encode());
+      }
+      return directory;
+    }
+
+    /// A loopback port with nothing listening on it.
+    Future<int> deadPort() async {
+      final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = probe.port;
+      await probe.close();
+      return port;
+    }
+
+    test('says nothing when a daemon is actually reachable', () async {
+      // The contract that makes this safe to call unconditionally: a working
+      // install produces no message, so a caller cannot accidentally show the
+      // user a wall of text about a daemon that is fine.
+      final daemon = await FakeDaemon.start();
+      addTearDown(daemon.close);
+      final directory = await installDir(
+        SangforTunnelHostConfig(controlPort: daemon.port),
+      );
+      expect(
+        await SangforTunnelInstalledDaemon.diagnoseUnavailable(
+          directory: directory,
+        ),
+        isNull,
+      );
+    });
+
+    test('nothing installed says how to install it', () async {
+      final directory = await installDir();
+      final message = await SangforTunnelInstalledDaemon.diagnoseUnavailable(
+        directory: directory,
+      );
+      expect(message, isNotNull);
+      expect(message, contains('--install'));
+      expect(message, contains('elevated'),
+          reason: 'the one step that needs a privilege says so');
+      expect(message, contains(directory.path),
+          reason: 'and names where it looked');
+    });
+
+    test('a configuration this version cannot read says so', () async {
+      final directory = await installDir();
+      await File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${SangforTunnelInstalledDaemon.hostConfigFileName}',
+      ).writeAsString('{not json');
+      final message = await SangforTunnelInstalledDaemon.diagnoseUnavailable(
+        directory: directory,
+      );
+      expect(message, contains('could not be read'));
+      expect(message, contains('--install'),
+          reason: 'the fix is to reinstall, not to edit the file');
+    });
+
+    test('a binary that moved out from under the logon task is named',
+        () async {
+      // The failure no retry can fix: --install records an absolute path, so an
+      // app update that relocates the executable leaves the task pointing at
+      // nothing. It then fails at every logon with no window and no log the user
+      // would ever see, which is why it is checked before the socket.
+      final directory = await installDir();
+      await File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${SangforTunnelInstalledDaemon.hostConfigFileName}',
+      ).writeAsString(
+        SangforTunnelHostConfig(
+          controlPort: await deadPort(),
+          installedFrom:
+              '${directory.path}${Platform.pathSeparator}moved-away.exe',
+        ).encode(),
+      );
+      final message = await SangforTunnelInstalledDaemon.diagnoseUnavailable(
+        directory: directory,
+      );
+      expect(message, contains('moved-away.exe'),
+          reason: 'names the path: $message');
+      expect(message, contains('gone'));
+      expect(message, contains('--install'));
+    });
+
+    test('an intact binary with nothing listening points at the task',
+        () async {
+      // Distinct from the case above: here a retry *can* fix it, because the
+      // task simply has not run since it was installed.
+      final directory = await installDir();
+      final binary = File(
+        '${directory.path}${Platform.pathSeparator}sangfor-tunneld',
+      );
+      await binary.writeAsString('not really a binary');
+      await File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${SangforTunnelInstalledDaemon.hostConfigFileName}',
+      ).writeAsString(
+        SangforTunnelHostConfig(
+          controlPort: await deadPort(),
+          installedFrom: binary.path,
+          logPath: '${directory.path}${Platform.pathSeparator}tunneld.log',
+        ).encode(),
+      );
+      final message = await SangforTunnelInstalledDaemon.diagnoseUnavailable(
+        directory: directory,
+        timeout: const Duration(milliseconds: 500),
+      );
+      expect(message, contains('nothing is answering'));
+      expect(message, contains('schtasks /Run /TN'),
+          reason: 'the command that fixes it is in the message: $message');
+      expect(message, contains(SangforTunnelInstalledDaemon.defaultTaskName));
+      expect(message, contains('tunneld.log'),
+          reason: 'and where to look if that does not help');
+      expect(message, isNot(contains('gone')),
+          reason: 'it did not misread this as a moved binary');
     });
   });
 
