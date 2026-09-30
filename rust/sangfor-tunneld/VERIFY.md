@@ -65,14 +65,29 @@ Needs an elevated shell, a session plan, and routes.
 The plan is what the Dart control plane produces after login: credentials, signing
 key, node endpoints, published resources, anti-MITM pins. `ATrustTunnel
 .buildSessionPlan(...)` builds it, and the app already calls that for the iOS
-packet tunnel extension (`vpn_connection_service.dart`, around the
-`IosVpnDevice.writeSessionPlan` call).
+packet tunnel extension and for `sangfor-tunneld`.
 
-To export one for this script, write that same document to a file — for example
-from a debug affordance in the app:
+A **debug build of the app writes one for you**. `_debugExportSessionPlan` in
+`vpn_connection_service.dart` runs at the end of a successful system-mode
+connect, writes the plan to `<temp>/sangfor-session-plan.json`, and prints the
+`verify_tunneld.ps1` command line with the routes it just installed:
+
+```
+[vpn] session plan written to C:\Users\you\AppData\Local\Temp\sangfor-session-plan.json
+[vpn]   it is a CREDENTIAL -- delete it after verifying, and never commit or paste it
+[vpn]   verify with:
+[vpn]     ./tool/verify_tunneld.ps1 -Plan "..." -Routes 10.0.0.0/8 -Routes ...
+```
+
+So the sequence is: connect in a debug build, copy the printed command, run it
+from an elevated shell. It is guarded by `kDebugMode` because the plan *is* a
+credential — a release or profile build never writes one.
+
+To export by hand instead, write the same document from anywhere that has a
+resolved tunnel:
 
 ```dart
-final plan = tunnel.buildSessionPlan(/* the same arguments the iOS path uses */);
+final plan = tunnel.buildSessionPlan(/* the same arguments the daemon path uses */);
 await File(path).writeAsString(plan.encode());
 ```
 
