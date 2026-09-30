@@ -1,6 +1,6 @@
 [package]
 name = "sangfor-tun"
-description = "Platform TUN devices for sangfor-core: wintun, /dev/net/tun, and handed-over file descriptors."
+description = "Platform packet devices for sangfor-core: wintun, /dev/net/tun, and descriptors handed over by Android and OHOS."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +10,25 @@ repository.workspace = true
 [dependencies]
 sangfor-core = { path = "../sangfor-core" }
 
+# Driver and descriptor access are the only unsafe code in the workspace
+# outside the C ABI, and each is behind a feature that is off by default.
+[target.'cfg(windows)'.dependencies]
+libloading = { version = "0.8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
+
 [features]
 default = []
-# Platform devices are opt-in so the core stays buildable everywhere.
-wintun = []
-tun = []
-fd = []
+# Windows: the signed wintun.dll driver, loaded at runtime from beside the
+# executable. Distribution is unchanged from the Dart path — the DLL is still
+# downloaded from wintun.net and staged by the app's build script.
+wintun = ["dep:libloading"]
+# Linux: /dev/net/tun with IFF_TUN | IFF_NO_PI.
+tun = ["dep:libc"]
+# Android and OHOS: a descriptor the platform service already opened and handed
+# across the ABI. Nothing is created here, so no ioctls and no capabilities.
+fd = ["dep:libc"]
+
+[lints.rust]
+missing_docs = "warn"

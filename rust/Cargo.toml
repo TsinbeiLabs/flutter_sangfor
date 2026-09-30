@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sangfor-core", "sangfor-tun", "sangfor-ffi"]
+members = ["sangfor-core", "sangfor-tls", "sangfor-tun", "sangfor-host", "sangfor-ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,21 @@ serde_json = "1"
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 hmac = { version = "0.12", default-features = false }
 base64 = { version = "0.22", default-features = false, features = ["std"] }
+# TLS: rustls with the pure-Rust RustCrypto provider. `ring`/`aws-lc-rs` are
+# both off the table because they need a C toolchain per target, which is what
+# makes the `aarch64-unknown-linux-ohos` build a plain `cargo build`.
+rustls = { version = "0.23", default-features = false, features = [
+    "std",
+    "tls12",
+    "logging",
+] }
+rustls-rustcrypto = "0.0.2-alpha"
+libc = "0.2"
+# One event loop for every desktop and mobile daemon. `mio` rather than `tokio`
+# because the plane is a synchronous state machine that returns effects: an
+# async runtime would mean colouring the whole core, and because `mio` is pure
+# Rust it keeps the OHOS and Android cross-builds free of a C toolchain.
+mio = { version = "1", default-features = false, features = ["os-poll", "net"] }
 
 [profile.release]
 # The core ships inside an iOS packet tunnel extension with a ~50 MB budget and

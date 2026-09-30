@@ -1,0 +1,20 @@
+[package]
+name = "sangfor-tls"
+description = "TLS transport for sangfor-core: rustls on the pure-Rust RustCrypto provider, pinned with the aTrust anti-MITM digest."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sangfor-core = { path = "../sangfor-core" }
+rustls = { workspace = true }
+rustls-rustcrypto = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

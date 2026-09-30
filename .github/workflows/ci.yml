@@ -42,7 +42,7 @@ jobs:
         run: flutter test
 
   rust-core:
-    name: rust data plane (sangfor-core, sangfor-ffi)
+    name: rust data plane (core, tls, tun, host, ffi)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -57,18 +57,39 @@ jobs:
           workspaces: rust
       - name: Format
         run: cargo fmt --all -- --check
+      # The device features are on so the Linux and handed-over-descriptor code
+      # is linted and tested, not just compiled for a foreign target.
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: >-
+          cargo clippy --workspace --all-targets
+          --features sangfor-tun/tun,sangfor-tun/fd -- -D warnings
       # The golden tests decode the fixtures the Dart reference implementation
       # generates, so a protocol change on either side fails here rather than
-      # in production.
+      # in production. `sangfor-host` runs the whole loop against a fake
+      # gateway that replays those same fixtures.
       - name: Test
-        run: cargo test --workspace
-      - name: Cross-compile the core (no C toolchain required)
+        run: >-
+          cargo test --workspace
+          --features sangfor-tun/tun,sangfor-tun/fd
+      # No C toolchain anywhere in the dependency graph: crypto is RustCrypto
+      # and TLS is rustls on the RustCrypto provider, so OHOS and Android stay
+      # a plain `cargo build`. `ring` or `aws-lc-rs` would break this.
+      - name: Cross-compile (no C toolchain required)
         run: |
-          rustup target add aarch64-linux-android x86_64-unknown-linux-musl
-          cargo build -p sangfor-core --release --target x86_64-unknown-linux-musl
-          cargo build -p sangfor-core --release --target aarch64-linux-android
+          rustup target add aarch64-linux-android aarch64-unknown-linux-ohos x86_64-unknown-linux-musl
+          cargo build --release --target x86_64-unknown-linux-musl \
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun
+          cargo build --release --target aarch64-linux-android \
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun --features sangfor-tun/fd
+          cargo build --release --target aarch64-unknown-linux-ohos \
+            -p sangfor-core -p sangfor-tls -p sangfor-host -p sangfor-tun --features sangfor-tun/fd
+      # The wintun device is Windows-only, so it is compiled here rather than
+      # tested: creating an adapter needs elevation and the signed driver.
+      - name: Cross-compile the Windows device
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo build --release --target x86_64-pc-windows-msvc \
+            -p sangfor-tun --features sangfor-tun/wintun
 
   swift-core:
     name: native swift core (packet tunnel data plane)

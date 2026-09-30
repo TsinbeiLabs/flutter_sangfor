@@ -1,0 +1,24 @@
+[package]
+name = "sangfor-host"
+description = "The event loop that runs sangfor-core against real sockets and a real packet device."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sangfor-core = { path = "../sangfor-core" }
+sangfor-tls = { path = "../sangfor-tls" }
+sangfor-tun = { path = "../sangfor-tun" }
+mio = { workspace = true }
+# Only for `StreamOwned`, which is how a rustls connection is paired with a
+# socket; the crypto itself lives in `sangfor-tls`.
+rustls = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
