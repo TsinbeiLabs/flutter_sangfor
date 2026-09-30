@@ -5,6 +5,11 @@
 //! a daemon that has to outlive the app that started it — so the same protocol
 //! is also served here over `127.0.0.1`.
 //!
+//! Both transports end at [`crate::runtime::dispatch`], which is the only place
+//! a request is interpreted. That is what keeps them from drifting: a verb that
+//! works over the socket works over stdin, and a refusal reads the same either
+//! way.
+//!
 //! # Why a socket and not a named pipe
 //!
 //! A named pipe is the idiomatic Windows answer and this is not idiomatic
@@ -22,22 +27,30 @@
 //! Any local process can connect. The token in [`crate::control`] is what stands
 //! between that and being able to *do* anything, and the blast radius without it
 //! is limited by what the protocol exposes: counters, the assigned address, and
-//! `stop`. No secret crosses this channel in either direction, and the process
-//! never impersonates a client, so there is no token-theft path either. A local
-//! unprivileged process that can stop your VPN can also disable the network
-//! adapter. Configure a token in anything but a development run.
+//! the session verbs. No secret crosses this channel in either direction —
+//! `start` names a plan by *path* precisely so that the signing key stays in the
+//! filesystem, where its permissions are the launcher's business and not this
+//! socket's — and the process never impersonates a client, so there is no
+//! token-theft path either. A local unprivileged process that can stop your VPN
+//! can also disable the network adapter. Configure a token in anything but a
+//! development run.
+//!
+//! What a socket still cannot do is *identify* its peer, so it cannot tell the
+//! interactive user's app from any other local process. `docs/rust-core.md` §6.2
+//! records why that rules out shipping this as a Windows service until the
+//! control channel is a pipe with `GetNamedPipeClientProcessId` behind it.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use sangfor_host::HostHandle;
-
-use crate::control::{reply, Action, Reply, Request, Snapshot};
-use crate::runtime::Logger;
+use crate::config::HostConfig as DaemonConfig;
+use crate::control::{Reply, Snapshot};
+use crate::runtime::{dispatch, Logger, Message};
 
 /// How many control clients may be served at once. A stuck client must not be
 /// able to exhaust the process's threads.
@@ -73,6 +86,50 @@ impl Drop for ControlListener {
     }
 }
 
+/// Opens the control socket [config] asks for, if it asks for one.
+///
+/// Returns `None` when `controlPort` is unset, or when the port could not be
+/// bound. Neither is fatal: stdin still works, and for a service the SCM can
+/// still stop the process. Refusing to start the tunnel over a busy port would
+/// be worse than running without counters — and a daemon that will not start is
+/// one an app cannot ask why.
+pub fn open(
+    config: &DaemonConfig,
+    snapshot: Arc<Mutex<Snapshot>>,
+    session_running: Arc<AtomicBool>,
+    supervisor: Sender<Message>,
+    log: Arc<Logger>,
+) -> Option<ControlListener> {
+    let port = config.control_port?;
+    if config.control_token.is_none() {
+        log.line(
+            "WARNING: the control socket has no token, so any local process can read counters, \
+             stop the tunnel, and start one of its own; set controlToken unless this is a \
+             development run",
+        );
+    }
+    match spawn(
+        port,
+        config.control_token.clone(),
+        snapshot,
+        session_running,
+        supervisor,
+        Arc::clone(&log),
+    ) {
+        Ok(bound) => {
+            log.line(&format!(
+                "control socket listening on 127.0.0.1:{}",
+                bound.port
+            ));
+            Some(bound)
+        }
+        Err(error) => {
+            log.line(&format!("the control socket could not be opened: {error}"));
+            None
+        }
+    }
+}
+
 /// Binds `127.0.0.1:port` and serves the control protocol until stopped.
 ///
 /// Passing 0 picks a free port, which [`ControlListener::port`] then reports —
@@ -86,7 +143,8 @@ pub fn spawn(
     port: u16,
     token: Option<String>,
     snapshot: Arc<Mutex<Snapshot>>,
-    stop: HostHandle,
+    session_running: Arc<AtomicBool>,
+    supervisor: Sender<Message>,
     log: Arc<Logger>,
 ) -> io::Result<ControlListener> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
@@ -116,7 +174,8 @@ pub fn spawn(
                         }
                         clients.fetch_add(1, Ordering::SeqCst);
                         let client_snapshot = Arc::clone(&snapshot);
-                        let client_stop = stop.clone();
+                        let client_running = Arc::clone(&session_running);
+                        let client_supervisor = supervisor.clone();
                         let client_log = Arc::clone(&log);
                         let client_token = token.clone();
                         let client_counter = Arc::clone(&clients);
@@ -127,7 +186,8 @@ pub fn spawn(
                                     socket,
                                     client_token.as_deref(),
                                     &client_snapshot,
-                                    &client_stop,
+                                    &client_running,
+                                    &client_supervisor,
                                     &client_log,
                                 );
                                 client_counter.fetch_sub(1, Ordering::SeqCst);
@@ -164,7 +224,8 @@ fn serve(
     mut socket: TcpStream,
     token: Option<&str>,
     snapshot: &Arc<Mutex<Snapshot>>,
-    stop: &HostHandle,
+    session_running: &AtomicBool,
+    supervisor: &Sender<Message>,
     log: &Logger,
 ) {
     let peer = socket
@@ -209,26 +270,11 @@ fn serve(
         if line.trim().is_empty() {
             continue;
         }
-        let (reply, action) = match Request::parse(&line) {
-            Ok(request) => {
-                let current = snapshot
-                    .lock()
-                    .map_or_else(|_| Snapshot::default(), |guard| guard.clone());
-                reply(&request, &current, token)
-            }
-            Err(error) => (Reply::failed(error), Action::None),
-        };
+        let reply = dispatch(&line, snapshot, session_running, token, supervisor);
         if let Err(error) = write_reply(&mut socket, &reply) {
             log.line(&format!(
                 "the control client at {peer} ended: replying failed ({error})"
             ));
-            return;
-        }
-        if action == Action::Stop {
-            log.line(&format!(
-                "a control client at {peer} asked the tunnel to stop"
-            ));
-            stop.stop();
             return;
         }
     }
@@ -249,7 +295,11 @@ fn write_reply(socket: &mut TcpStream, reply: &Reply) -> io::Result<()> {
 /// # Errors
 ///
 /// Returns a connect, write, read, or parse failure.
-pub fn request_once(port: u16, request: &Request, timeout: Duration) -> io::Result<Reply> {
+pub fn request_once(
+    port: u16,
+    request: &crate::control::Request,
+    timeout: Duration,
+) -> io::Result<Reply> {
     let socket =
         TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), timeout)?;
     socket.set_read_timeout(Some(timeout))?;
@@ -268,72 +318,95 @@ pub fn request_once(port: u16, request: &Request, timeout: Duration) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::{Action, Command, Request};
+    use crate::runtime::{Directive, Message};
     use std::sync::Arc;
 
-    /// A [`HostHandle`] that records stops, so a test can assert `stop` reached
-    /// the tunnel without running one.
-    fn stop_flag() -> (HostHandle, Arc<AtomicBool>) {
-        let device = Arc::new(sangfor_tun::LoopbackDevice::new("control-test"));
-        let plan = sangfor_core::plan::SessionPlan::decode(
-            br#"{"schemaVersion":1,"sid":"s","deviceId":"d","connectionId":"c",
-                 "username":"u","signKeyBase64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-                 "lang":"en","processName":"p","processPath":"/p","processPlatform":"linux",
-                 "nodes":{},"majorNodeGroup":"major","routes":[],"dnsServers":[]}"#,
-        )
-        .expect("the plan decodes");
-        let plane = sangfor_core::plane::DataPlane::new(
-            plan,
-            sangfor_core::plane::ConnectionConfig::default(),
-            sangfor_core::terminator::TerminatorConfig::default(),
-            1,
-        );
-        let connector = Arc::new(sangfor_host::TlsConnector::new(
-            sangfor_tls::TrustPolicy::opportunistic(),
-            Duration::from_secs(1),
-        ));
-        let host = sangfor_host::Host::new(
-            plane,
-            device,
-            connector,
-            sangfor_host::HostConfig::default(),
-        )
-        .expect("a host");
-        (host.handle(), Arc::new(AtomicBool::new(false)))
+    /// A listener with a supervisor stand-in that records what it was asked.
+    ///
+    /// The transport's job is framing, the token gate, and concurrency; whether
+    /// a verb *does* the right thing is [`crate::runtime`]'s, tested there
+    /// against a real session. Splitting it that way is what lets these run in
+    /// microseconds instead of bringing up a tunnel each time.
+    struct Harness {
+        listener: ControlListener,
+        session_running: Arc<AtomicBool>,
+        received: Arc<Mutex<Vec<Action>>>,
     }
 
-    fn listener(token: Option<&str>) -> (ControlListener, Arc<Mutex<Snapshot>>) {
-        let snapshot = Arc::new(Mutex::new(Snapshot {
-            active: true,
-            interface: Some("sangfor-test".to_string()),
-            ..Snapshot::default()
-        }));
-        let (handle, _) = stop_flag();
-        let listener = spawn(
-            0,
-            token.map(str::to_string),
-            Arc::clone(&snapshot),
-            handle,
-            Logger::stderr(),
-        )
-        .expect("the listener binds");
-        assert!(listener.port > 0, "an ephemeral port was assigned");
-        (listener, snapshot)
+    impl Harness {
+        fn new(token: Option<&str>) -> Self {
+            let snapshot = Arc::new(Mutex::new(Snapshot {
+                active: true,
+                interface: Some("sangfor-test".to_string()),
+                ..Snapshot::default()
+            }));
+            let session_running = Arc::new(AtomicBool::new(false));
+            let received = Arc::new(Mutex::new(Vec::new()));
+
+            let (tx, rx) = std::sync::mpsc::channel::<Message>();
+            let sink = Arc::clone(&received);
+            // Answers every directive so a client thread never blocks, and
+            // records the verb so a test can assert what reached the supervisor.
+            thread::Builder::new()
+                .name("test-supervisor".to_string())
+                .spawn(move || {
+                    while let Ok(message) = rx.recv() {
+                        let Message::Directive(Directive { action, respond }) = message else {
+                            continue;
+                        };
+                        sink.lock().expect("lockable").push(action.clone());
+                        let _ = respond.send(match &action {
+                            Action::Start { plan: path, .. } => Reply::status(Snapshot {
+                                interface: Some(path.display().to_string()),
+                                ..Snapshot::default()
+                            }),
+                            _ => Reply::acknowledged(),
+                        });
+                    }
+                })
+                .expect("a thread");
+
+            let listener = spawn(
+                0,
+                token.map(str::to_string),
+                Arc::clone(&snapshot),
+                Arc::clone(&session_running),
+                tx,
+                Logger::stderr(),
+            )
+            .expect("the listener binds");
+            assert!(listener.port > 0, "an ephemeral port was assigned");
+            Self {
+                listener,
+                session_running,
+                received,
+            }
+        }
+
+        fn port(&self) -> u16 {
+            self.listener.port
+        }
+
+        fn actions(&self) -> Vec<Action> {
+            self.received.lock().expect("lockable").clone()
+        }
     }
 
     #[test]
     fn a_client_can_ping_and_read_a_snapshot() {
-        let (mut listener, _) = listener(None);
+        let harness = Harness::new(None);
         let ping = request_once(
-            listener.port,
-            &Request::new(crate::control::Command::Ping),
+            harness.port(),
+            &Request::new(Command::Ping),
             Duration::from_secs(5),
         )
         .expect("a reply");
         assert!(ping.ok);
 
         let status = request_once(
-            listener.port,
-            &Request::new(crate::control::Command::Status),
+            harness.port(),
+            &Request::new(Command::Status),
             Duration::from_secs(5),
         )
         .expect("a reply");
@@ -341,48 +414,136 @@ mod tests {
         let data = status.data.expect("a snapshot");
         assert!(data.active);
         assert_eq!(data.interface.as_deref(), Some("sangfor-test"));
-        listener.shutdown();
+        assert!(
+            harness.actions().is_empty(),
+            "reading state does not involve the supervisor"
+        );
     }
 
     #[test]
-    fn a_token_is_required_when_one_is_configured() {
-        let (mut listener, _) = listener(Some("s3cret"));
+    fn the_snapshot_reports_whether_a_session_is_running() {
+        // A client that cannot tell "idle" from "starting" either waits forever
+        // or sends a second `start` and gets refused.
+        let harness = Harness::new(None);
+        let idle = request_once(
+            harness.port(),
+            &Request::new(Command::Status),
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(!idle.data.expect("a snapshot").session_running);
+
+        harness.session_running.store(true, Ordering::SeqCst);
+        let running = request_once(
+            harness.port(),
+            &Request::new(Command::Status),
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(running.data.expect("a snapshot").session_running);
+    }
+
+    #[test]
+    fn a_supervisor_verb_reaches_the_supervisor_and_its_verdict_comes_back() {
+        let harness = Harness::new(None);
+        harness.session_running.store(true, Ordering::SeqCst);
+        let reply = request_once(
+            harness.port(),
+            &Request::new(Command::StopSession),
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(reply.ok);
+        assert_eq!(harness.actions(), vec![Action::StopSession]);
+    }
+
+    #[test]
+    fn a_start_carries_its_plan_path_across_the_socket() {
+        // The path is the whole mechanism: the plan holds the signing key, so
+        // it must never be inlined into a request on a channel any local
+        // process can join.
+        let harness = Harness::new(None);
+        let reply = request_once(
+            harness.port(),
+            &Request::start("/var/run/sangfor/plan.json", None::<&str>),
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(reply.ok);
+        assert_eq!(
+            harness.actions(),
+            vec![Action::Start {
+                plan: std::path::PathBuf::from("/var/run/sangfor/plan.json"),
+                config: None,
+            }]
+        );
+        let line = reply.render();
+        assert!(
+            !line.contains("signKey"),
+            "a reply never echoes plan material: {line}"
+        );
+    }
+
+    #[test]
+    fn a_token_is_required_when_one_was_configured() {
+        let harness = Harness::new(Some("s3cret"));
         let refused = request_once(
-            listener.port,
-            &Request::new(crate::control::Command::Status),
+            harness.port(),
+            &Request::new(Command::Status),
             Duration::from_secs(5),
         )
         .expect("a reply");
         assert!(!refused.ok, "no token, no snapshot");
 
         let allowed = request_once(
-            listener.port,
+            harness.port(),
             &Request {
-                cmd: crate::control::Command::Status,
+                cmd: Command::Status,
                 token: Some("s3cret".to_string()),
+                plan_path: None,
+                config_path: None,
             },
             Duration::from_secs(5),
         )
         .expect("a reply");
         assert!(allowed.ok);
         assert!(allowed.data.is_some());
-        listener.shutdown();
+    }
+
+    #[test]
+    fn a_token_gates_start_too() {
+        // The most powerful verb is the one that most needs gating: it points
+        // the daemon at a plan, and therefore at a gateway, with a signing key.
+        let harness = Harness::new(Some("s3cret"));
+        let refused = request_once(
+            harness.port(),
+            &Request::start("/tmp/plan.json", None::<&str>),
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(!refused.ok, "an unauthenticated start is refused");
+        assert!(
+            harness.actions().is_empty(),
+            "and nothing reached the supervisor"
+        );
+
+        let allowed = request_once(
+            harness.port(),
+            &Request {
+                token: Some("s3cret".to_string()),
+                ..Request::start("/tmp/plan.json", None::<&str>)
+            },
+            Duration::from_secs(5),
+        )
+        .expect("a reply");
+        assert!(allowed.ok);
+        assert_eq!(harness.actions().len(), 1);
     }
 
     #[test]
     fn garbage_gets_an_error_reply_rather_than_silence() {
-        let (mut listener, _) = listener(None);
-        let reply = request_once(
-            listener.port,
-            // `request_once` serializes a Request, so drive the socket directly
-            // to send something that is not one.
-            &Request::new(crate::control::Command::Ping),
-            Duration::from_secs(5),
-        )
-        .expect("a reply");
-        assert!(reply.ok);
-
-        let mut socket = TcpStream::connect(("127.0.0.1", listener.port)).expect("connects");
+        let harness = Harness::new(None);
+        let mut socket = TcpStream::connect(("127.0.0.1", harness.port())).expect("connects");
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("settable");
@@ -397,13 +558,12 @@ mod tests {
             parsed.error.unwrap_or_default().contains("unrecognised"),
             "the error should say what went wrong"
         );
-        listener.shutdown();
     }
 
     #[test]
     fn several_commands_on_one_connection_are_answered_in_order() {
-        let (mut listener, _) = listener(None);
-        let mut socket = TcpStream::connect(("127.0.0.1", listener.port)).expect("connects");
+        let harness = Harness::new(None);
+        let mut socket = TcpStream::connect(("127.0.0.1", harness.port())).expect("connects");
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("settable");
@@ -419,14 +579,13 @@ mod tests {
             assert!(parsed.ok);
             assert_eq!(parsed.data.is_some(), expected, "only status carries data");
         }
-        listener.shutdown();
     }
 
     #[test]
     fn shutdown_ends_the_listener() {
-        let (mut listener, _) = listener(None);
-        let port = listener.port;
-        listener.shutdown();
+        let harness = Harness::new(None);
+        let port = harness.port();
+        drop(harness);
         // The port is released, so a second listener can take it. Retrying
         // briefly avoids racing the kernel's teardown.
         let mut bound = None;
@@ -438,5 +597,45 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(bound.is_some(), "the port should be free after shutdown");
+    }
+
+    #[test]
+    fn a_configuration_with_no_control_port_opens_nothing() {
+        // Stdin stays the only channel, which is the right default for a child
+        // process a launcher is already talking to.
+        let config = DaemonConfig::default();
+        assert!(config.control_port.is_none());
+        let opened = open(
+            &config,
+            Arc::new(Mutex::new(Snapshot::default())),
+            Arc::new(AtomicBool::new(false)),
+            std::sync::mpsc::channel::<Message>().0,
+            Logger::stderr(),
+        );
+        assert!(opened.is_none());
+    }
+
+    #[test]
+    fn an_unusable_port_is_reported_and_does_not_stop_the_daemon() {
+        // A service that refuses to start because its counters could not be
+        // served is a worse outcome than a service with no counters.
+        let taken = TcpListener::bind(("127.0.0.1", 0)).expect("bindable");
+        let port = taken.local_addr().expect("an address").port();
+        let config = DaemonConfig {
+            control_port: Some(port),
+            ..DaemonConfig::default()
+        };
+        let opened = open(
+            &config,
+            Arc::new(Mutex::new(Snapshot::default())),
+            Arc::new(AtomicBool::new(false)),
+            std::sync::mpsc::channel::<Message>().0,
+            Logger::stderr(),
+        );
+        assert!(
+            opened.is_none(),
+            "the busy port is reported, not fatal: it is still held"
+        );
+        assert!(taken.local_addr().is_ok(), "and the holder is untouched");
     }
 }

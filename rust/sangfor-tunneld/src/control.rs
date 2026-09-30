@@ -13,9 +13,20 @@
 //!
 //! # Authorization
 //!
-//! [`Request::token`] gates `status` and `stop`. `ping` is deliberately open:
+//! [`Request::token`] gates everything but `ping`. `ping` is deliberately open:
 //! liveness is what a service manager probes before it has any secret, and
 //! answering it leaks nothing.
+//!
+//! # No secret material crosses this channel
+//!
+//! [`Command::Start`] names a plan *document* by path rather than carrying it.
+//! The session plan holds the request signing key, and the control channel is
+//! reachable by any local process that has the token — which, on a loopback
+//! socket, is a weaker guarantee than a file's permissions. Passing a path
+//! keeps the plan in the filesystem, where the launcher already had to put it
+//! for `--plan`, and keeps [`Snapshot`] the only thing a client can read.
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -26,15 +37,52 @@ pub struct Request {
     /// What to do.
     pub cmd: Command,
     /// The shared secret, required for everything but [`Command::Ping`].
-    #[serde(default)]
+    ///
+    /// Omitted rather than sent as `null` when absent, so the wire form of a
+    /// request that carries nothing but a verb is still `{"cmd":"ping"}` —
+    /// which is what every client written before `planPath` existed sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// The session plan to start from, for [`Command::Start`].
+    ///
+    /// A path rather than the document; see the module docs for why. The
+    /// daemon must be able to read it, which for a service means a location
+    /// both the caller's user and the service account can reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_path: Option<PathBuf>,
+    /// A host configuration for this session, for [`Command::Start`].
+    ///
+    /// Optional. A child process gets its configuration from `--config` and
+    /// needs nothing here. An *installed* daemon was configured once, at
+    /// install time, but which routes to install depends on what the gateway
+    /// published for this session — so the caller writes a fresh document and
+    /// names it. See [`crate::service`] for the merge rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<PathBuf>,
 }
 
 impl Request {
-    /// A request with no token.
+    /// A request with no token and no documents.
     #[must_use]
     pub const fn new(cmd: Command) -> Self {
-        Self { cmd, token: None }
+        Self {
+            cmd,
+            token: None,
+            plan_path: None,
+            config_path: None,
+        }
+    }
+
+    /// A `start` for the plan at [plan_path], with an optional per-session host
+    /// configuration at [config_path].
+    #[must_use]
+    pub fn start(plan_path: impl Into<PathBuf>, config_path: Option<impl Into<PathBuf>>) -> Self {
+        Self {
+            cmd: Command::Start,
+            token: None,
+            plan_path: Some(plan_path.into()),
+            config_path: config_path.map(Into::into),
+        }
     }
 
     /// Parses one line.
@@ -59,6 +107,11 @@ pub enum Command {
     Stop,
     /// Prove the process is alive and reading. Needs no token.
     Ping,
+    /// Begin a session from `planPath`. Refused while one is already running,
+    /// so a client cannot quietly tear down a tunnel somebody else started.
+    Start,
+    /// End the current session and stay alive, ready for the next one.
+    StopSession,
 }
 
 /// What the tunnel reports about itself.
@@ -69,6 +122,11 @@ pub enum Command {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// A session is running. Distinct from [`Self::active`]: a daemon that has
+    /// been started but not yet given a plan has no session, and a session that
+    /// is still handshaking is not yet active. A client that cannot tell those
+    /// apart cannot tell "wait" from "start one".
+    pub session_running: bool,
     /// The handshake completed and the tunnel is carrying traffic.
     pub active: bool,
     /// The virtual IP the gateway assigned.
@@ -163,12 +221,21 @@ impl Reply {
 ///
 /// [token] is the secret this process was configured with; `None` means the
 /// control channel is open to any local process, which the caller should have
-/// logged a warning about at startup.
+/// logged a warning about at startup. [session_running] is whether the process
+/// currently has a session, which decides whether `start` and `stopSession`
+/// make sense.
 ///
-/// Pure, so the protocol can be tested without a tunnel: the only side effect of
-/// [`Command::Stop`] is the returned [`Action`], which the caller performs.
+/// Pure, so the protocol can be tested without a tunnel: the only effect of a
+/// verb that changes anything is the returned [`Action`], which the caller
+/// performs. A caller that races another client may still have to refuse — the
+/// supervisor re-checks — but this keeps the common case honest and testable.
 #[must_use]
-pub fn reply(request: &Request, snapshot: &Snapshot, token: Option<&str>) -> (Reply, Action) {
+pub fn reply(
+    request: &Request,
+    snapshot: &Snapshot,
+    token: Option<&str>,
+    session_running: bool,
+) -> (Reply, Action) {
     if request.cmd == Command::Ping {
         return (Reply::acknowledged(), Action::None);
     }
@@ -180,7 +247,36 @@ pub fn reply(request: &Request, snapshot: &Snapshot, token: Option<&str>) -> (Re
     }
     match request.cmd {
         Command::Status => (Reply::status(snapshot.clone()), Action::None),
-        Command::Stop => (Reply::acknowledged(), Action::Stop),
+        Command::Start => {
+            if session_running {
+                return (
+                    Reply::failed("a session is already running; send stopSession first"),
+                    Action::None,
+                );
+            }
+            match &request.plan_path {
+                Some(path) => (
+                    Reply::acknowledged(),
+                    Action::Start {
+                        plan: path.clone(),
+                        config: request.config_path.clone(),
+                    },
+                ),
+                None => (Reply::failed("start needs a planPath"), Action::None),
+            }
+        }
+        // Idempotent on purpose. A client that asks to stop a session which
+        // already died — the gateway kicked it, the device went away — gets an
+        // acknowledgement rather than an error it has to distinguish from a
+        // real failure.
+        Command::StopSession => {
+            if session_running {
+                (Reply::acknowledged(), Action::StopSession)
+            } else {
+                (Reply::acknowledged(), Action::None)
+            }
+        }
+        Command::Stop => (Reply::acknowledged(), Action::Exit),
         // Ping was handled above; the arm keeps the match exhaustive.
         Command::Ping => (Reply::acknowledged(), Action::None),
     }
@@ -213,12 +309,26 @@ fn subtle_eq(actual: &[u8], wanted: &[u8]) -> bool {
 }
 
 /// What the caller must do after replying.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Only the supervisor can carry these out — they change what the process is
+/// doing, or end it — so a control client forwards one and waits for the
+/// verdict rather than acting on it directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// Nothing.
+    /// Nothing; the reply already said everything.
     None,
-    /// End the session and exit.
-    Stop,
+    /// Begin a session from the plan document at `plan`, configured by the
+    /// document at `config` if one was named.
+    Start {
+        /// The session plan.
+        plan: PathBuf,
+        /// A per-session host configuration, or `None` to keep the startup one.
+        config: Option<PathBuf>,
+    },
+    /// End the current session and keep the process alive.
+    StopSession,
+    /// End the current session and exit.
+    Exit,
 }
 
 #[cfg(test)]
@@ -243,12 +353,55 @@ mod tests {
     }
 
     #[test]
+    fn the_supervisor_verbs_parse_with_their_arguments() {
+        let request =
+            Request::parse(r#"{"cmd":"start","planPath":"/tmp/p.json","token":"t"}"#).expect("ok");
+        assert_eq!(request.cmd, Command::Start);
+        assert_eq!(
+            request.plan_path,
+            Some(PathBuf::from("/tmp/p.json")),
+            "camelCase on the wire, a path in hand"
+        );
+        assert_eq!(
+            Request::parse(r#"{"cmd":"stopSession"}"#)
+                .expect("parses")
+                .cmd,
+            Command::StopSession
+        );
+    }
+
+    #[test]
+    fn the_wire_format_of_the_original_verbs_did_not_change() {
+        // `stop` and `status` shipped before the supervisor existed, and the
+        // Dart client, the verification script, and a human at a terminal all
+        // send them. Adding verbs must not have moved these.
+        let line = serde_json::to_string(&Request::new(Command::Stop)).expect("serializes");
+        assert_eq!(line, r#"{"cmd":"stop"}"#);
+        let line = serde_json::to_string(&Request::new(Command::Status)).expect("serializes");
+        assert_eq!(line, r#"{"cmd":"status"}"#);
+        assert_eq!(Reply::acknowledged().render(), r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn a_start_request_carries_the_plan_path() {
+        let request = Request::start("/var/run/sangfor/plan.json", None::<&str>);
+        assert_eq!(request.cmd, Command::Start);
+        assert_eq!(
+            request.plan_path,
+            Some(PathBuf::from("/var/run/sangfor/plan.json"))
+        );
+        let line = serde_json::to_string(&request).expect("serializes");
+        assert!(line.contains("planPath"), "{line}");
+    }
+
+    #[test]
     fn surrounding_whitespace_and_a_trailing_newline_are_tolerated() {
         // A client writing lines with `writeln!` sends the newline; rejecting it
         // would make every such client look broken.
         let request = Request::parse("  {\"cmd\":\"status\"}\n").expect("parses");
         assert_eq!(request.cmd, Command::Status);
         assert!(request.token.is_none());
+        assert!(request.plan_path.is_none());
     }
 
     #[test]
@@ -270,20 +423,130 @@ mod tests {
             routed: 7,
             ..Snapshot::default()
         };
-        let (reply, action) = reply(&Request::new(Command::Status), &snapshot, None);
+        let (reply, action) = reply(&Request::new(Command::Status), &snapshot, None, false);
         assert_eq!(action, Action::None);
         assert!(reply.ok);
         assert_eq!(reply.data, Some(snapshot));
     }
 
     #[test]
-    fn stop_is_the_only_command_with_a_side_effect() {
+    fn start_is_refused_while_a_session_is_running() {
+        // Replacing a live tunnel would silently drop the connections of
+        // whoever started it. A client that means to reconnect sends
+        // `stopSession` first, which is one more round trip and no ambiguity.
+        let (reply, action) = reply(
+            &Request::start("/tmp/plan.json", None::<&str>),
+            &Snapshot::default(),
+            None,
+            true,
+        );
+        assert!(!reply.ok);
+        assert_eq!(action, Action::None, "a refused start starts nothing");
+        assert!(
+            reply.error.unwrap_or_default().contains("stopSession"),
+            "the refusal says what to do instead"
+        );
+    }
+
+    #[test]
+    fn start_needs_a_plan_to_start_from() {
+        let (reply, action) = reply(
+            &Request::new(Command::Start),
+            &Snapshot::default(),
+            None,
+            false,
+        );
+        assert!(!reply.ok);
+        assert_eq!(action, Action::None);
+        assert!(
+            reply.error.unwrap_or_default().contains("planPath"),
+            "the refusal names the missing field"
+        );
+    }
+
+    #[test]
+    fn start_hands_the_path_to_the_supervisor_rather_than_reading_it() {
+        // `reply` is pure: it must not touch the filesystem, or the protocol
+        // could not be tested without a tunnel and a plan on disk.
+        let (reply, action) = reply(
+            &Request::start("/tmp/plan.json", None::<&str>),
+            &Snapshot::default(),
+            None,
+            false,
+        );
+        assert!(reply.ok);
         assert_eq!(
-            reply(&Request::new(Command::Stop), &Snapshot::default(), None).1,
-            Action::Stop
+            action,
+            Action::Start {
+                plan: PathBuf::from("/tmp/plan.json"),
+                config: None
+            }
+        );
+    }
+
+    #[test]
+    fn stop_session_is_idempotent() {
+        // The common case is a client tearing down after the session already
+        // died: the gateway kicked it, or the device went away. An error there
+        // would make a normal disconnect look like a failure.
+        let (running_reply, running_action) = reply(
+            &Request::new(Command::StopSession),
+            &Snapshot::default(),
+            None,
+            true,
+        );
+        assert!(running_reply.ok);
+        assert_eq!(running_action, Action::StopSession);
+
+        let (idle_reply, idle_action) = reply(
+            &Request::new(Command::StopSession),
+            &Snapshot::default(),
+            None,
+            false,
+        );
+        assert!(
+            idle_reply.ok,
+            "stopping nothing is not an error: {:?}",
+            idle_reply.error
         );
         assert_eq!(
-            reply(&Request::new(Command::Ping), &Snapshot::default(), None).1,
+            idle_action,
+            Action::None,
+            "and asks the supervisor for nothing"
+        );
+    }
+
+    #[test]
+    fn stop_is_the_verb_that_ends_the_process() {
+        assert_eq!(
+            reply(
+                &Request::new(Command::Stop),
+                &Snapshot::default(),
+                None,
+                true
+            )
+            .1,
+            Action::Exit
+        );
+        assert_eq!(
+            reply(
+                &Request::new(Command::Stop),
+                &Snapshot::default(),
+                None,
+                false
+            )
+            .1,
+            Action::Exit,
+            "an idle daemon can still be told to go away"
+        );
+        assert_eq!(
+            reply(
+                &Request::new(Command::Ping),
+                &Snapshot::default(),
+                None,
+                false
+            )
+            .1,
             Action::None
         );
     }
@@ -293,8 +556,10 @@ mod tests {
         let request = Request {
             cmd: Command::Stop,
             token: Some("wrong".to_string()),
+            plan_path: None,
+            config_path: None,
         };
-        let (reply, action) = reply(&request, &Snapshot::default(), Some(TOKEN));
+        let (reply, action) = reply(&request, &Snapshot::default(), Some(TOKEN), true);
         assert!(!reply.ok);
         assert_eq!(
             action,
@@ -308,11 +573,28 @@ mod tests {
     }
 
     #[test]
+    fn starting_a_session_needs_the_token_too() {
+        // `start` is the most powerful verb there is: it points the daemon at a
+        // plan and therefore at a gateway, with a signing key. Leaving it open
+        // would let any local process take over the tunnel.
+        let request = Request {
+            cmd: Command::Start,
+            token: Some("wrong".to_string()),
+            plan_path: Some(PathBuf::from("/tmp/plan.json")),
+            config_path: None,
+        };
+        let (reply, action) = reply(&request, &Snapshot::default(), Some(TOKEN), false);
+        assert!(!reply.ok);
+        assert_eq!(action, Action::None);
+    }
+
+    #[test]
     fn a_missing_token_is_refused_when_one_is_configured() {
         let (reply, action) = reply(
             &Request::new(Command::Status),
             &Snapshot::default(),
             Some(TOKEN),
+            false,
         );
         assert!(!reply.ok);
         assert_eq!(action, Action::None);
@@ -323,8 +605,10 @@ mod tests {
         let request = Request {
             cmd: Command::Status,
             token: Some(TOKEN.to_string()),
+            plan_path: None,
+            config_path: None,
         };
-        let (reply, _) = reply(&request, &Snapshot::default(), Some(TOKEN));
+        let (reply, _) = reply(&request, &Snapshot::default(), Some(TOKEN), false);
         assert!(reply.ok);
     }
 
@@ -335,6 +619,7 @@ mod tests {
             &Request::new(Command::Ping),
             &Snapshot::default(),
             Some(TOKEN),
+            false,
         );
         assert!(reply.ok);
         assert_eq!(action, Action::None);
@@ -344,9 +629,14 @@ mod tests {
     fn an_unconfigured_channel_is_open() {
         // Documented behaviour, not an oversight: a token is opt-in, and a
         // developer running the daemon by hand should not need one.
-        let (reply, action) = reply(&Request::new(Command::Stop), &Snapshot::default(), None);
+        let (reply, action) = reply(
+            &Request::new(Command::Stop),
+            &Snapshot::default(),
+            None,
+            false,
+        );
         assert!(reply.ok);
-        assert_eq!(action, Action::Stop);
+        assert_eq!(action, Action::Exit);
     }
 
     #[test]
@@ -388,6 +678,7 @@ mod tests {
     fn the_snapshot_uses_camel_case_like_every_other_document() {
         let line = Reply::status(Snapshot::default()).render();
         for key in [
+            "sessionRunning",
             "virtualIp",
             "interfaceConfigured",
             "channelsOpen",
@@ -398,7 +689,7 @@ mod tests {
             assert!(line.contains(key), "{key} is missing from {line}");
         }
         assert!(
-            !line.contains("virtual_ip"),
+            !line.contains("virtual_ip") && !line.contains("session_running"),
             "snake_case leaked into the protocol: {line}"
         );
     }
@@ -415,7 +706,14 @@ mod tests {
             ..Snapshot::default()
         })
         .render();
-        for forbidden in ["sid", "signKey", "password", "deviceId", "connectionId"] {
+        for forbidden in [
+            "sid",
+            "signKey",
+            "password",
+            "deviceId",
+            "connectionId",
+            "planPath",
+        ] {
             assert!(
                 !line
                     .to_ascii_lowercase()
@@ -423,5 +721,20 @@ mod tests {
                 "{forbidden} must not appear in a status reply: {line}"
             );
         }
+    }
+
+    #[test]
+    fn an_idle_daemon_reports_that_it_has_no_session() {
+        // `active` cannot say this: it is false both before a session starts
+        // and while one is still handshaking, and a client that confuses the
+        // two either waits forever or starts a second tunnel.
+        let idle = Reply::status(Snapshot::default()).render();
+        assert!(idle.contains(r#""sessionRunning":false"#), "{idle}");
+        let running = Reply::status(Snapshot {
+            session_running: true,
+            ..Snapshot::default()
+        })
+        .render();
+        assert!(running.contains(r#""sessionRunning":true"#), "{running}");
     }
 }

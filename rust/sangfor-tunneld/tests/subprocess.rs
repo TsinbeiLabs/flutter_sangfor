@@ -45,6 +45,16 @@ impl Drop for Daemon {
 
 /// Starts the daemon and waits until its control socket is listening.
 fn start(name: &str) -> Daemon {
+    start_with(name, true)
+}
+
+/// Starts the daemon, with or without an initial session.
+///
+/// `with_plan` false is the shape a Windows service has: the process is
+/// installed once at boot with no session, and an app hands it a plan each time
+/// the user connects. That path is what the `start` verb exists for, and it
+/// cannot be exercised by a daemon that was already given `--plan`.
+fn start_with(name: &str, with_plan: bool) -> Daemon {
     let dir = std::env::temp_dir().join(format!("sangfor-tunneld-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let plan_path = dir.join("plan.json");
@@ -59,21 +69,46 @@ fn start(name: &str) -> Daemon {
     )
     .expect("the config writes");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_sangfor-tunneld"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sangfor-tunneld"));
+    command
         .arg("--dry-run")
-        .arg("--plan")
-        .arg(&plan_path)
         .arg("--config")
         .arg(&config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the daemon starts");
+        .stderr(Stdio::piped());
+    if with_plan {
+        command.arg("--plan").arg(&plan_path);
+    }
+    let mut child = command.spawn().expect("the daemon starts");
 
     let stderr = child.stderr.take().expect("stderr is piped");
     let port = wait_for_port(&mut child, stderr);
     Daemon { child, port, dir }
+}
+
+/// The `start` request for this daemon's plan, as a client would send it.
+///
+/// Backslashes are escaped because a Windows temp path is full of them, and
+/// the request is JSON.
+fn start_request(daemon: &Daemon) -> String {
+    let path = daemon
+        .dir
+        .join("plan.json")
+        .display()
+        .to_string()
+        .replace('\\', "\\\\");
+    format!(r#"{{"cmd":"start","planPath":"{path}","token":"{TOKEN}"}}"#)
+}
+
+/// Reads `sessionRunning` out of a status reply.
+fn session_running(daemon: &Daemon) -> bool {
+    let reply = exchange(
+        daemon.port,
+        &format!(r#"{{"cmd":"status","token":"{TOKEN}"}}"#),
+    );
+    assert!(reply.contains(r#""ok":true"#), "status: {reply}");
+    reply.contains(r#""sessionRunning":true"#)
 }
 
 /// Reads the daemon's log until it reports its control port, then keeps draining
@@ -257,6 +292,145 @@ fn stop_ends_the_process_with_code_zero() {
         0,
         "a requested stop exits cleanly"
     );
+}
+
+#[test]
+fn a_daemon_launched_with_no_plan_starts_one_on_request_and_can_start_another() {
+    // The service shape, end to end on the shipped binary: installed once with
+    // no session, then driven entirely over the control socket. This is what
+    // removes the elevation prompt from Windows — one elevated process serving
+    // every connect/disconnect cycle, rather than a new one per connection.
+    let mut daemon = start_with("idle-service", false);
+    assert_eq!(
+        exchange(daemon.port, r#"{"cmd":"ping"}"#),
+        r#"{"ok":true}"#,
+        "an idle daemon is alive and answering"
+    );
+    assert!(
+        !session_running(&daemon),
+        "it has no session until one is started"
+    );
+
+    let request = start_request(&daemon);
+    let reply = exchange(daemon.port, &request);
+    assert!(reply.contains(r#""ok":true"#), "the first start: {reply}");
+    assert!(session_running(&daemon), "and it is running");
+
+    let reply = exchange(
+        daemon.port,
+        &format!(r#"{{"cmd":"stopSession","token":"{TOKEN}"}}"#),
+    );
+    assert!(reply.contains(r#""ok":true"#), "stopSession: {reply}");
+    assert!(
+        !session_running(&daemon),
+        "the session is gone but the process is not"
+    );
+    assert!(
+        daemon.child.try_wait().expect("queryable").is_none(),
+        "stopSession must not end the daemon"
+    );
+
+    // The part that quietly breaks if the device, the snapshot, or the
+    // configurator thread is left bound to the first session.
+    let reply = exchange(daemon.port, &request);
+    assert!(
+        reply.contains(r#""ok":true"#),
+        "a second session on the same process: {reply}"
+    );
+    assert!(session_running(&daemon), "and it is running again");
+
+    assert_eq!(
+        exchange(
+            daemon.port,
+            &format!(r#"{{"cmd":"stop","token":"{TOKEN}"}}"#)
+        ),
+        r#"{"ok":true}"#
+    );
+    assert_eq!(wait_for_exit(&mut daemon.child), 0);
+}
+
+#[test]
+fn a_second_start_is_refused_rather_than_replacing_a_live_session() {
+    let daemon = start_with("busy-start", false);
+    let request = start_request(&daemon);
+    assert!(
+        exchange(daemon.port, &request).contains(r#""ok":true"#),
+        "the first start succeeds"
+    );
+
+    let refused = exchange(daemon.port, &request);
+    assert!(
+        refused.contains(r#""ok":false"#),
+        "a running session is not silently replaced: {refused}"
+    );
+    assert!(
+        refused.contains("stopSession"),
+        "the refusal says how to proceed: {refused}"
+    );
+    assert!(
+        session_running(&daemon),
+        "and the first session survived the attempt"
+    );
+}
+
+#[test]
+fn starting_a_session_needs_the_token() {
+    // `start` points the daemon at a plan, and therefore at a gateway, with a
+    // signing key. It is the verb that most needs gating: without it any local
+    // process could take the tunnel over.
+    let daemon = start_with("start-gate", false);
+    let path = daemon
+        .dir
+        .join("plan.json")
+        .display()
+        .to_string()
+        .replace('\\', "\\\\");
+    let reply = exchange(
+        daemon.port,
+        &format!(r#"{{"cmd":"start","planPath":"{path}"}}"#),
+    );
+    assert!(
+        reply.contains(r#""ok":false"#),
+        "an unauthenticated start is refused: {reply}"
+    );
+    assert!(
+        !session_running(&daemon),
+        "and nothing was started behind the refusal"
+    );
+}
+
+#[test]
+fn a_start_naming_a_plan_that_is_not_there_is_refused_with_the_path_in_it() {
+    // A service that died on a bad path could not be restarted by the app that
+    // just made the mistake, so the failure has to come back as a reply.
+    let daemon = start_with("bad-path", false);
+    let reply = exchange(
+        daemon.port,
+        &format!(r#"{{"cmd":"start","planPath":"Z:/absent/plan.json","token":"{TOKEN}"}}"#),
+    );
+    assert!(reply.contains(r#""ok":false"#), "{reply}");
+    assert!(
+        reply.contains("absent"),
+        "the error names the path that was wrong: {reply}"
+    );
+    assert_eq!(
+        exchange(daemon.port, r#"{"cmd":"ping"}"#),
+        r#"{"ok":true}"#,
+        "the daemon is still serving after the refusal"
+    );
+}
+
+#[test]
+fn stop_session_on_an_idle_daemon_is_not_an_error() {
+    // The common case is a client tearing down after the session already died:
+    // the gateway kicked it, or the device went away. An error there would make
+    // an ordinary disconnect look like a failure the user has to be told about.
+    let daemon = start_with("idle-stop", false);
+    let reply = exchange(
+        daemon.port,
+        &format!(r#"{{"cmd":"stopSession","token":"{TOKEN}"}}"#),
+    );
+    assert_eq!(reply, r#"{"ok":true}"#, "stopping nothing succeeds");
 }
 
 #[test]

@@ -40,8 +40,10 @@ pub mod control;
 pub mod device;
 pub mod netconfig;
 pub mod runtime;
+pub mod service;
 pub mod transport;
 
 pub use config::{DeviceKind, HostConfig};
 pub use netconfig::InterfaceConfig;
-pub use runtime::{Exit, RunError};
+pub use runtime::{Exit, InitialSession, RunError};
+pub use service::{CommandLine, Install};

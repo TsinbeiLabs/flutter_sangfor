@@ -1,6 +1,6 @@
 # Verifying `sangfor-tunneld` against a real gateway
 
-Everything in `rust/` is tested without a gateway: 153 Rust tests, including the
+Everything in `rust/` is tested without a gateway: 221 Rust tests, including the
 whole data plane driven end to end against a fake one that replays the recorded
 handshake from the golden fixture. That proves the implementations agree with each
 other. It cannot prove the protocol is right — only an authorized deployment can
@@ -15,6 +15,10 @@ do that, and only on a machine with elevation and the signed driver.
 # Stage 2: a real tunnel. Elevated shell, an exported plan, routes.
 ./tool/verify_tunneld.ps1 -Plan plan.json -Routes 10.0.0.0/8 -Dns 10.0.0.53 `
     -Probe https://portal.example.edu/
+
+# Stage 3: an installed daemon, driven from an ordinary shell. The check that
+# the elevation prompt is actually gone.
+./tool/verify_tunneld.ps1 -Installed -Plan plan.json
 ```
 
 Exit code is 0 when every check passed, 1 when any failed. Warnings do not fail
@@ -29,11 +33,25 @@ Runs by default and needs nothing but the built binary. It checks:
 | Elevation | A warning only. Preflight and `--dry-run` work unelevated; a real adapter does not. |
 | `wintun.dll` | A warning during preflight, a failure with `-Plan`. Stage it with the app's `app/scripts/stage_wintun.ps1`, which pins the archive SHA-256. It must be the signed DLL from wintun.net. |
 | `--help` exits 0 | The binary is not runnable on this machine. |
-| Dry run | Starts the daemon on an in-memory device, discovers its control port from its log, pings it, reads a snapshot, confirms a tokenless `status` is **refused**, and confirms `stop` exits 0. |
+| `--print-install` | The generated logon task does not ask for elevation (`/RL HIGHEST`), so it would run exactly as unelevated as the app and fail the same way it does today. |
+| Dry run | Starts the daemon **idle** on an in-memory device, discovers its control port from its log, then drives a whole session lifecycle over the socket. |
 
-That last block is the same exchange the Rust subprocess tests and the Dart
-client test run, so if it passes here the binary, the protocol, and the token gate
-are all working on this machine.
+The dry run is launched with no `--plan`, which is the shape an installed daemon
+has: it starts at logon with nothing to do and is handed a session later. It then
+checks, in order, that the daemon reports no session; that a tokenless `status`
+**and** a tokenless `start` are both refused; that `start` runs a session from a
+plan it was pointed at; that `stopSession` ends the session **without ending the
+process**; and that a *second* session starts on the same process. Finally `stop`
+must exit 0.
+
+That second session is the check that matters. One elevated process has to serve
+every connect/disconnect cycle, and a second `start` breaks quietly if the device,
+the snapshot, or the configurator thread stayed bound to the first one — which
+presents as a reconnect that hangs, not as an error.
+
+This is the same exchange the Rust subprocess tests and the Dart client test run,
+so if it passes here the binary, the protocol, and the token gate are all working
+on this machine.
 
 `-TestAdapter` additionally creates and removes a throwaway wintun adapter, which
 proves the driver installs. It needs elevation and briefly adds a network adapter.
@@ -114,7 +132,49 @@ is. Pass a `host:port` for a TCP connect or an `http(s)://` URL for a request.
 | `unrouted` climbing | Packets are reaching the tunnel that no published resource covers. Either the route list is too wide or the resource list is stale. |
 | `deviceDropped` > 0 | The tunnel is behind the stack and shedding packets. Looks like loss on the far side and is not. |
 | `connectFailures` > 0 | The node could not be reached or its certificate did not match a pin. The daemon's log carries the reason, and a pin failure says so explicitly. |
-| `fatal` set | The session is dead. Re-login and re-export the plan; restarting with the same plan will not help. |
+| `sessionRunning` false | The daemon has no session. Either `start` was never sent or the session already ended — look at `fatal` and the log to tell which. Distinct from `active` false, which also covers a session that is still handshaking. |
+| `fatal` set | The session is dead. Re-login and re-export the plan; restarting with the same plan will not help. The daemon stays up, so `start` again with a fresh plan rather than relaunching it. |
+
+## Installing it, and stage 3
+
+The reason any of this matters on Windows is that creating a wintun adapter needs
+an elevated process, and the app runs `asInvoker`. Stages 1 and 2 both run the
+daemon in the foreground of the current shell, so they inherit whatever privilege
+that shell has and prove nothing about the app's situation.
+
+Installing puts the daemon in an elevated **logon task**:
+
+```powershell
+# Once, from an elevated shell.
+sangfor-tunneld --install
+
+# Then either log off and on, or start it now:
+schtasks /Run /TN SangforTunnel
+```
+
+`--install` writes `%LOCALAPPDATA%\sangfor-tunneld\host.json` — holding a freshly
+generated control token, a fixed port (7166), and a log path — and registers the
+task with `/RL HIGHEST`. `--print-install` shows both commands without running
+them. It is a logon task and not a Windows service on purpose; `docs/rust-core.md`
+§6.2 records why, and the short version is that a service runs as LocalSystem in
+session 0, where it can neither identify its control client nor hold a per-user
+token.
+
+Stage 3 then drives that daemon **from an ordinary shell**:
+
+```powershell
+./tool/verify_tunneld.ps1 -Installed
+./tool/verify_tunneld.ps1 -Installed -Plan plan.json    # start a real session
+```
+
+It warns if the shell happens to be elevated, because then a success proves
+nothing. Without `-Plan` it confirms the daemon is reachable and idle, which is
+what an app expects to find. With one, it starts a session, waits for the
+interface to come up, prints the daemon's log, and ends with `stopSession` — not
+`stop`, because the daemon is installed and the next connect wants it.
+
+A session started here, from an unelevated shell, in a daemon that opened a real
+adapter, is the user-visible win: it is what the app will do.
 
 ## Troubleshooting
 
@@ -139,7 +199,16 @@ not have. `Get-Process sangfor-tunneld | Stop-Process -Force`.
   platform service. Those need on-device runs; nothing here exercises them.
 - **iOS.** The packet tunnel extension keeps `NEPacketTunnelFlow` and does not run
   this binary at all. See `docs/rust-core.md` §6.
-- **Running as a service.** Stage 2 runs the daemon in the foreground of an
-  elevated shell. The service wrapper is not written yet; when it is, add a stage
-  that installs it, starts it unelevated, and confirms the app can drive it
-  without a UAC prompt — which is the actual user-visible win.
+- **Installing.** `--install` needs an elevated shell, so it is never run here;
+  stage 1 prints the command instead and checks that it asks for elevation. The
+  quoting of that command *is* tested — in Rust, by rendering it and parsing it
+  back into argv — because a path with a space in it is every install path there
+  is, and a naive quoting function truncates it at the first one.
+- **Running as a Windows service.** Deliberately not built: a service runs as
+  LocalSystem in session 0, where the loopback control socket can neither
+  identify its peer nor hold a per-user token, and where the binary would need an
+  SCM dispatcher that cannot be tested without installing it. The logon task is
+  the mechanism that is both sufficient and testable. §6.2 has the full argument.
+- **The daemon surviving logoff.** A logon task ends with the session. If the
+  tunnel has to outlive that, it needs the service path above, and with it a
+  named pipe with `GetNamedPipeClientProcessId` behind it.

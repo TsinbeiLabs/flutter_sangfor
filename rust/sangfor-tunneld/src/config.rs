@@ -187,6 +187,42 @@ impl HostConfig {
         Ok(config)
     }
 
+    /// Overlays a per-session configuration on this process-level one.
+    ///
+    /// An installed daemon is configured once, at install time, but which
+    /// routes to install depends on what the gateway published for *this*
+    /// session. So a `start` request may name a second document, and this is
+    /// how the two are combined.
+    ///
+    /// The session document wins for what describes the tunnel: the address,
+    /// netmask, gateway, routes, DNS servers, and MTU. The process keeps
+    /// everything else, for two reasons:
+    ///
+    /// - `controlPort`, `controlToken`, and `logPath` belong to the process,
+    ///   and re-binding the port would drop the very connection the request
+    ///   arrived on;
+    /// - `acceptUnpinnedCertificate` and `connectTimeoutSeconds` are *policy*.
+    ///   A deployment that fails closed on unpinned certificates must not be
+    ///   talkable out of that by whoever can reach the control socket, which
+    ///   is why a per-session document cannot loosen it.
+    ///
+    /// `device`, `interface`, `fd`, and `wintunDll` stay with the process
+    /// because the device is already open by the time this is consulted;
+    /// renaming the interface would leave the session's routes on an adapter
+    /// nobody is watching.
+    #[must_use]
+    pub fn for_session(&self, session: Self) -> Self {
+        Self {
+            address: session.address,
+            netmask: session.netmask,
+            gateway: session.gateway,
+            routes: session.routes,
+            dns_servers: session.dns_servers,
+            mtu: session.mtu,
+            ..self.clone()
+        }
+    }
+
     /// Checks the fields that a serializer cannot.
     ///
     /// # Errors
@@ -409,5 +445,91 @@ mod tests {
             HostConfig::decode(br#"{"controlPort":0,"controlToken":"s3cret"}"#).expect("decodes");
         assert_eq!(config.control_port, Some(0), "0 means pick a free port");
         assert_eq!(config.control_token.as_deref(), Some("s3cret"));
+    }
+
+    #[test]
+    fn a_per_session_configuration_supplies_the_routes_and_the_address() {
+        let process = HostConfig {
+            interface: "Luotopia".to_string(),
+            control_port: Some(7000),
+            control_token: Some("s3cret".to_string()),
+            log_path: Some(PathBuf::from("/var/log/sangfor.log")),
+            ..HostConfig::default()
+        };
+        let session = HostConfig {
+            routes: vec!["10.1.0.0/16".to_string(), "10.9.0.0/16".to_string()],
+            dns_servers: vec!["10.0.0.53".to_string()],
+            address: Some("10.0.0.42".to_string()),
+            mtu: 1380,
+            // None of these belong to a session document, and one of them is a
+            // policy the process must not be talkable out of.
+            interface: "Hijacked".to_string(),
+            control_port: Some(1),
+            control_token: Some("attacker".to_string()),
+            log_path: Some(PathBuf::from("/tmp/exfil.log")),
+            accept_unpinned_certificate: true,
+            ..HostConfig::default()
+        };
+
+        let effective = process.for_session(session);
+        assert_eq!(effective.routes, vec!["10.1.0.0/16", "10.9.0.0/16"]);
+        assert_eq!(effective.dns_servers, vec!["10.0.0.53"]);
+        assert_eq!(effective.address.as_deref(), Some("10.0.0.42"));
+        assert_eq!(effective.mtu, 1380);
+
+        assert_eq!(effective.interface, "Luotopia", "the process owns its name");
+        assert_eq!(effective.control_port, Some(7000), "and its socket");
+        assert_eq!(effective.control_token.as_deref(), Some("s3cret"));
+        assert_eq!(
+            effective.log_path,
+            Some(PathBuf::from("/var/log/sangfor.log"))
+        );
+    }
+
+    #[test]
+    fn a_per_session_configuration_cannot_loosen_the_trust_policy() {
+        // A deployment that fails closed on unpinned certificates has said so
+        // in the document its administrator wrote. Whoever can reach the
+        // control socket gets to choose routes; they do not get to choose
+        // whether a man in the middle is acceptable.
+        let process = HostConfig {
+            accept_unpinned_certificate: false,
+            connect_timeout_seconds: 30,
+            ..HostConfig::default()
+        };
+        let session = HostConfig {
+            accept_unpinned_certificate: true,
+            connect_timeout_seconds: 1,
+            ..HostConfig::default()
+        };
+        let effective = process.for_session(session);
+        assert!(
+            !effective.accept_unpinned_certificate,
+            "the process's policy survives"
+        );
+        assert_eq!(effective.connect_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn a_per_session_configuration_is_validated_after_the_merge() {
+        // Merging first and validating after is what makes a bad route in a
+        // session document get refused with a message, rather than accepted and
+        // then rejected by `netsh` with the interface half-configured.
+        let process = HostConfig {
+            control_port: Some(7000),
+            ..HostConfig::default()
+        };
+        let session = HostConfig {
+            routes: vec!["10.0.0.0/33".to_string()],
+            ..HostConfig::default()
+        };
+        let error = process
+            .for_session(session)
+            .validate()
+            .expect_err("a route that is not a CIDR block");
+        assert!(
+            error.to_string().contains("not an IPv4 CIDR block"),
+            "{error}"
+        );
     }
 }

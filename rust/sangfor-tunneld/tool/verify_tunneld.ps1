@@ -40,6 +40,12 @@
   outside the tunnel's own process, so a success means the operating system
   really is routing through the adapter.
 
+.PARAMETER Installed
+  Also drive a daemon that was installed with `--install`, from *this* shell.
+  The point is that this shell is not elevated: a session started here is one
+  the app could have started, which is the whole reason the logon task exists.
+  Needs `-Plan` to start a session; without it, only reachability is checked.
+
 .PARAMETER TestAdapter
   Also create and remove a throwaway wintun adapter during preflight. Proves the
   driver installs, which the binary check alone does not. Requires elevation and
@@ -67,6 +73,7 @@ param(
   [string[]]$Dns = @(),
   [string]$Probe,
   [switch]$TestAdapter,
+  [switch]$Installed,
   [string]$Daemon,
   [string]$WintunDll,
   [int]$SettleSeconds = 45
@@ -126,9 +133,13 @@ function Invoke-Preflight {
     Write-Ok 'running elevated; a wintun adapter can be created'
   }
   else {
-    Write-Warn 'not elevated. Preflight still runs, but a real tunnel needs ' +
-      'elevation -- which is exactly what running the daemon as a service ' +
-      'removes from the app.'
+    # Parenthesised: `Write-Warn 'a' + 'b'` parses as the command `Write-Warn 'a'`
+    # followed by a separate expression, so the continuation is emitted to the
+    # output stream on its own and appears at the end of the run, nowhere near
+    # the warning it belongs to.
+    Write-Warn ('not elevated. Preflight still runs, but a real tunnel needs ' +
+      'elevation -- which is exactly what installing the daemon as a logon ' +
+      'task removes from the app.')
   }
 
   Write-Step 'Driver'
@@ -168,33 +179,58 @@ function Invoke-Preflight {
     return
   }
 
+  Write-Step 'Install command (what removing the elevation prompt needs)'
+  # Printed, not run: creating the logon task needs an elevated shell, and this
+  # stage is the one that works without any privilege. Showing the command is
+  # the useful half anyway -- whoever runs it should see it first.
+  if (-not $IsWindows -and $PSVersionTable.Platform -ne 'Win32NT') {
+    Write-Warn 'the logon task is a Windows mechanism; install a systemd unit here'
+  }
+  else {
+    $install = & $DaemonPath --print-install 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Bad "--print-install exited $LASTEXITCODE"
+      Write-Info ($install -join "`n")
+    }
+    elseif (-not ($install -join "`n").Contains('/RL HIGHEST')) {
+      # Without this flag the task runs exactly as unelevated as the app does,
+      # and opening the adapter fails the same way it does today.
+      Write-Bad 'the install command does not ask for elevation'
+      Write-Info ($install -join "`n")
+    }
+    else {
+      Write-Ok 'the install command asks for an elevated logon task'
+      foreach ($line in $install) { Write-Info $line }
+      if (Test-Admin) {
+        Write-Info 'This shell is elevated: run the /Create line above to install it.'
+      }
+      else {
+        Write-Info 'Run the /Create line above from an elevated shell to install it.'
+      }
+    }
+  }
+
   Write-Step 'Dry run (in-memory device, no privileges needed)'
   $scratch = Join-Path ([IO.Path]::GetTempPath()) "sangfor-verify-$PID"
   New-Item -ItemType Directory -Force -Path $scratch | Out-Null
   try {
-    $planPath = Join-Path $scratch 'plan.json'
-    # A syntactically valid plan naming a documentation-range node. The tunnel
-    # comes up and then fails to connect, which is the point: this stage checks
-    # the process, not the gateway.
-    @'
-{"schemaVersion":1,"sid":"preflight","deviceId":"dev","connectionId":"conn",
- "username":"user","signKeyBase64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
- "lang":"en","processName":"tunneld","processPath":"C:\\tunneld.exe",
- "processPlatform":"windows","nodes":{"major":["203.0.113.9:441"]},
- "majorNodeGroup":"major","routes":[],"dnsServers":[],"heartbeatSeconds":2}
-'@ | Set-Content -LiteralPath $planPath -NoNewline
-
+    $planPath = Write-VerifyPlan -Directory $scratch
     $configPath = Join-Path $scratch 'host.json'
+    $token = "preflight-$PID"
     @{
       device       = 'loopback'
       interface    = 'sangfor-preflight'
       controlPort  = 0
-      controlToken = "preflight-$PID"
+      controlToken = $token
     } | ConvertTo-Json -Compress | Set-Content -LiteralPath $configPath -NoNewline
 
     $stderrPath = Join-Path $scratch 'daemon.log'
+    # Launched with no plan, which is the shape an installed daemon has: it
+    # starts at logon with nothing to do and is handed a session later. Driving
+    # it that way here is what proves the install path works, because a daemon
+    # given `--plan` never exercises `start` at all.
     $process = Start-Process -FilePath $DaemonPath `
-      -ArgumentList '--dry-run', '--plan', $planPath, '--config', $configPath `
+      -ArgumentList '--dry-run', '--config', $configPath `
       -RedirectStandardError $stderrPath -RedirectStandardOutput (Join-Path $scratch 'out.txt') `
       -PassThru -NoNewWindow
 
@@ -214,10 +250,16 @@ function Invoke-Preflight {
       Write-Bad "ping was refused: $($ping | ConvertTo-Json -Compress)"
     }
 
-    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = "preflight-$PID" }
+    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
     if ($status.ok) {
       Write-Ok 'status answered'
       Write-Info ($status.data | ConvertTo-Json -Compress)
+      if ($status.data.sessionRunning) {
+        Write-Bad 'a daemon with no plan reports a running session'
+      }
+      else {
+        Write-Ok 'it starts idle, with no session'
+      }
     }
     else {
       Write-Bad "status was refused: $($status | ConvertTo-Json -Compress)"
@@ -231,7 +273,70 @@ function Invoke-Preflight {
       Write-Bad 'status succeeded without a token; the control socket is open to any local process'
     }
 
-    Send-ControlRequest -Port $port -Request @{ cmd = 'stop'; token = "preflight-$PID" } | Out-Null
+    # `start` is the verb that hands a daemon its session, and the one that most
+    # needs gating: it points the process at a plan, and therefore at a gateway,
+    # with a signing key.
+    $unauthorized = Send-ControlRequest -Port $port -Request @{ cmd = 'start'; planPath = $planPath }
+    if (-not $unauthorized.ok) {
+      Write-Ok 'start without the token was refused, as it should be'
+    }
+    else {
+      Write-Bad 'start succeeded without a token; any local process could take the tunnel over'
+    }
+
+    $started = Send-ControlRequest -Port $port -Request @{ cmd = 'start'; planPath = $planPath; token = $token }
+    if ($started.ok) {
+      Write-Ok 'start ran a session from a plan it was pointed at'
+    }
+    else {
+      Write-Bad "start was refused: $($started | ConvertTo-Json -Compress)"
+      Write-Info (Get-Content -LiteralPath $stderrPath -Raw)
+      return
+    }
+    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+    if ($status.ok -and $status.data.sessionRunning) {
+      Write-Ok "the session is running on $($status.data.interface)"
+    }
+    else {
+      Write-Bad "the session is not running: $($status | ConvertTo-Json -Compress)"
+    }
+
+    $stopped = Send-ControlRequest -Port $port -Request @{ cmd = 'stopSession'; token = $token }
+    if ($stopped.ok -and -not $process.HasExited) {
+      Write-Ok 'stopSession ended the session and left the process up'
+    }
+    elseif ($process.HasExited) {
+      Write-Bad "stopSession ended the whole process (exit $($process.ExitCode))"
+    }
+    else {
+      Write-Bad "stopSession was refused: $($stopped | ConvertTo-Json -Compress)"
+    }
+    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+    if ($status.ok -and -not $status.data.sessionRunning) {
+      Write-Ok 'it is idle again'
+    }
+    else {
+      Write-Bad "it still reports a session: $($status | ConvertTo-Json -Compress)"
+    }
+
+    # The check that matters most for an installed daemon: one elevated process
+    # has to serve every connect/disconnect cycle, not just the first. A second
+    # session breaks quietly if the device, the snapshot, or the configurator
+    # thread stayed bound to the one before it.
+    $again = Send-ControlRequest -Port $port -Request @{ cmd = 'start'; planPath = $planPath; token = $token }
+    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+    if ($again.ok -and $status.ok -and $status.data.sessionRunning) {
+      Write-Ok 'a second session started on the same process'
+      if ($status.data.connectFailures -ne 0) {
+        Write-Warn "the second session inherited counters from the first (connectFailures=$($status.data.connectFailures))"
+      }
+    }
+    else {
+      Write-Bad "the second session did not start: $($again | ConvertTo-Json -Compress)"
+      Write-Info (Get-Content -LiteralPath $stderrPath -Raw)
+    }
+
+    Send-ControlRequest -Port $port -Request @{ cmd = 'stop'; token = $token } | Out-Null
     if ($process.WaitForExit(10000)) {
       if ($process.ExitCode -eq 0) {
         Write-Ok 'stopped on request and exited 0'
@@ -256,17 +361,48 @@ function Invoke-Preflight {
       Write-Bad '-TestAdapter needs elevation'
     }
     else {
-      $name = "sangfor-verify-$PID"
-      $created = & $DaemonPath --device wintun --interface $name --check `
-        --plan (Join-Path $scratch 'plan.json') 2>&1
-      if ($LASTEXITCODE -eq 0) {
-        Write-Ok "created and released the adapter '$name'"
+      # Its own scratch directory: the preflight one was removed above, and
+      # pointing `--plan` at a file that is gone reports a driver failure that
+      # is really a missing document.
+      $adapterScratch = Join-Path ([IO.Path]::GetTempPath()) "sangfor-adapter-$PID"
+      New-Item -ItemType Directory -Force -Path $adapterScratch | Out-Null
+      try {
+        $name = "sangfor-verify-$PID"
+        $created = & $DaemonPath --device wintun --interface $name --check `
+          --plan (Write-VerifyPlan -Directory $adapterScratch) 2>&1
+        if ($LASTEXITCODE -eq 0) {
+          Write-Ok "created and released the adapter '$name'"
+        }
+        else {
+          Write-Bad "could not create an adapter: $created"
+        }
       }
-      else {
-        Write-Bad "could not create an adapter: $created"
+      finally {
+        Remove-Item -LiteralPath $adapterScratch -Recurse -Force -ErrorAction SilentlyContinue
       }
     }
   }
+}
+
+function Write-VerifyPlan {
+  <#
+    Writes a syntactically valid session plan and returns its path.
+
+    It names a documentation-range node, so a tunnel built from it comes up and
+    then fails to connect. That is the point: these stages check the process,
+    not the gateway, and a node that cannot be reached is one that cannot be
+    reached by anybody.
+  #>
+  param([string]$Directory)
+  $path = Join-Path $Directory 'plan.json'
+  @'
+{"schemaVersion":1,"sid":"preflight","deviceId":"dev","connectionId":"conn",
+ "username":"user","signKeyBase64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+ "lang":"en","processName":"tunneld","processPath":"C:\\tunneld.exe",
+ "processPlatform":"windows","nodes":{"major":["203.0.113.9:441"]},
+ "majorNodeGroup":"major","routes":[],"dnsServers":[],"heartbeatSeconds":2}
+'@ | Set-Content -LiteralPath $path -NoNewline
+  return $path
 }
 
 function Wait-ForControlPort {
@@ -321,7 +457,7 @@ function Invoke-RealTunnel {
 
   if (-not (Test-Admin)) {
     Write-Bad 'a real tunnel needs elevation to create the adapter and install routes'
-    Write-Info 'Run this shell as administrator, or install the daemon as a service.'
+    Write-Info 'Run this shell as administrator, or install the daemon with --install and drive it from an ordinary shell.'
     return
   }
   if (-not (Test-Path -LiteralPath $Plan)) {
@@ -530,10 +666,131 @@ function Invoke-RealTunnel {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Stage 3: a daemon that was installed, driven from an ordinary shell
+# ---------------------------------------------------------------------------
+
+function Invoke-InstalledDaemon {
+  <#
+    The check that proves the elevation prompt is actually gone.
+
+    Stages 1 and 2 run the daemon in the foreground of this shell, so they
+    inherit whatever privilege it has. An installed daemon does not: it was
+    started by the logon task, elevated, and this function talks to it over the
+    loopback socket from here. If this shell is not elevated and a session
+    starts, then an unelevated app can drive a tunnel -- which is the entire
+    point of installing it.
+  #>
+  Write-Step 'Installed daemon (driven from this shell)'
+
+  if (Test-Admin) {
+    Write-Warn 'this shell is elevated, so a success here does not prove the app could do it'
+    Write-Info 'Re-run from an ordinary shell for the check that matters.'
+  }
+  else {
+    Write-Ok 'this shell is not elevated, which is what the app runs as'
+  }
+
+  $directory = Join-Path $env:LOCALAPPDATA 'sangfor-tunneld'
+  $configPath = Join-Path $directory 'host.json'
+  if (-not (Test-Path -LiteralPath $configPath)) {
+    Write-Bad "no configuration at $configPath"
+    Write-Info "Install it from an elevated shell: sangfor-tunneld --install"
+    Write-Info 'Then log off and on again, or run the task once with schtasks /Run /TN SangforTunnel.'
+    return
+  }
+
+  $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+  $port = if ($config.controlPort) { [int]$config.controlPort } else { 7166 }
+  $token = $config.controlToken
+  if (-not $token) {
+    Write-Warn 'the installed configuration has no control token; any local process can drive it'
+  }
+  Write-Info "configuration: $configPath"
+  Write-Info "control port:  $port"
+
+  $ping = Send-ControlRequest -Port $port -Request @{ cmd = 'ping' }
+  if (-not $ping.ok) {
+    Write-Bad "nothing is answering on 127.0.0.1:$port"
+    Write-Info 'The task may not have run yet: schtasks /Run /TN SangforTunnel'
+    Write-Info "Its own log is at $(Join-Path $directory 'tunneld.log')"
+    return
+  }
+  Write-Ok 'the installed daemon is answering, from an ordinary shell'
+
+  $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+  if (-not $status.ok) {
+    Write-Bad "status was refused: $($status | ConvertTo-Json -Compress)"
+    Write-Info 'The token in the configuration does not match the running daemon.'
+    return
+  }
+  Write-Ok 'status answered'
+  Write-Info ($status.data | ConvertTo-Json -Compress)
+  if ($status.data.sessionRunning) {
+    Write-Warn 'a session is already running; this stage will not replace it'
+    Write-Info 'Send {"cmd":"stopSession"} first, or disconnect from the app.'
+    return
+  }
+
+  if (-not $Plan) {
+    Write-Ok 'reachable and idle, which is what an app expects to find'
+    Write-Info 'Pass -Plan <plan.json> to start a real session through it.'
+    return
+  }
+
+  $started = Send-ControlRequest -Port $port -Request @{
+    cmd = 'start'; planPath = (Resolve-Path $Plan).Path; token = $token
+  }
+  if (-not $started.ok) {
+    Write-Bad "start was refused: $($started | ConvertTo-Json -Compress)"
+    Write-Info "The daemon's own log will say why: $(Join-Path $directory 'tunneld.log')"
+    return
+  }
+  Write-Ok 'an unelevated shell started a session in an elevated daemon'
+
+  $deadline = (Get-Date).AddSeconds($SettleSeconds)
+  $up = $null
+  while ((Get-Date) -lt $deadline) {
+    $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+    if ($status.ok -and ($status.data.interfaceConfigured -or $status.data.fatal)) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  if ($status.data.fatal) {
+    Write-Bad "the session died: $($status.data.fatal)"
+  }
+  elseif ($status.data.interfaceConfigured) {
+    Write-Ok "the interface came up as $($status.data.interface) with $($status.data.virtualIp -join ', ')"
+  }
+  else {
+    Write-Warn "the interface was not configured within $SettleSeconds s"
+  }
+  Write-Info ($status.data | ConvertTo-Json -Compress)
+
+  Write-Step 'Installed daemon log'
+  $logPath = Join-Path $directory 'tunneld.log'
+  if (Test-Path -LiteralPath $logPath) {
+    Get-Content -LiteralPath $logPath -Tail 40 | ForEach-Object { Write-Info $_ }
+  }
+  else {
+    Write-Warn "no log at $logPath"
+  }
+
+  # stopSession, not stop: the daemon is installed and the next connect wants
+  # it. Ending the process here would leave the app with nothing to talk to
+  # until the next logon.
+  Send-ControlRequest -Port $port -Request @{ cmd = 'stopSession'; token = $token } | Out-Null
+  $status = Send-ControlRequest -Port $port -Request @{ cmd = 'status'; token = $token }
+  if ($status.ok -and -not $status.data.sessionRunning) {
+    Write-Ok 'the session ended and the daemon stayed up for the next one'
+  }
+  else {
+    Write-Bad "the daemon did not return to idle: $($status | ConvertTo-Json -Compress)"
+  }
+}
+
 function Test-RouteCovers {
   param([string]$Address, [string]$Cidr)
-  if ($Address -notmatch '^\d+\.\d+\.\d+\.\d+$') { return $false }
-  if ($Cidr -notmatch '^(\d+\.\d+\.\d+\.\d+)/(\d+)$') { return $false }
+  if ($Address -notmatch '^\d+\.\d+\.\d+\.\d+$') { return $false }  if ($Cidr -notmatch '^(\d+\.\d+\.\d+\.\d+)/(\d+)$') { return $false }
   $prefix = [int]$Matches[2]
   $network = [uint32]0
   $octets = $Matches[1] -split '\.'
@@ -560,6 +817,7 @@ Write-Info "daemon: $daemonPath"
 
 Invoke-Preflight -DaemonPath $daemonPath
 if ($Plan) { Invoke-RealTunnel -DaemonPath $daemonPath }
+if ($Installed) { Invoke-InstalledDaemon }
 elseif (-not $Preflight) {
   Write-Step 'Stage 2 skipped'
   Write-Info 'Pass -Plan <exported-plan.json> (and -Routes) to run a real tunnel.'

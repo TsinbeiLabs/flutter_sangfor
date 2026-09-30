@@ -148,3 +148,26 @@ jobs:
             signed DLL from https://www.wintun.net/. The consuming app's build
             already stages it for the Flutter runner; the daemon needs the same
             copy. `prebuilts.fragment.json` has the checksums for a lock file.
+
+            **Installing on Windows.** Creating a wintun adapter needs an
+            elevated process, so an app that runs `asInvoker` cannot do it at
+            all. Run `sangfor-tunneld --install` once from an elevated shell: it
+            writes `%LOCALAPPDATA%\sangfor-tunneld\host.json` with a generated
+            control token and registers a logon task with `/RL HIGHEST`, so the
+            daemon starts elevated at every logon with no prompt and an ordinary
+            app can drive it over `127.0.0.1:7166`. `--print-install` shows the
+            commands without running them.
+
+            It is a logon task and not a service on purpose: a service runs as
+            LocalSystem in session 0, where the control socket can neither
+            identify its peer nor hold a per-user token. The trade is that the
+            tunnel does not outlive logoff. `docs/rust-core.md` §6.2 has the
+            argument.
+
+            **Control protocol.** One JSON object per line, on stdin and on the
+            loopback socket: `ping`, `status`, `start` (with `planPath` and an
+            optional `configPath`), `stopSession`, and `stop`. The process
+            outlives its sessions — `--plan` means "run this one first", not
+            "run this one and exit" — so one daemon serves repeated
+            connect/disconnect cycles. A session plan is named by path and never
+            sent inline, because it carries the request signing key.

@@ -42,7 +42,7 @@ Measured, with the workspace release profile (`opt-level="z"`, `lto`,
 Run it locally:
 
 ```bash
-cd rust && cargo test --workspace        # 133 tests
+cd rust && cargo test --workspace        # 221 tests
 cargo clippy --workspace --all-targets --features sangfor-tun/wintun -- -D warnings
 cargo build --release -p sangfor-tunneld
 ```
@@ -52,8 +52,13 @@ testable on a laptop and on a CI runner:
 
 ```bash
 sangfor-tunneld --dry-run --check --plan plan.json --interface Luotopia
-sangfor-tunneld --dry-run --plan - <<< "$PLAN_JSON"   # then: {"cmd":"status"}
+sangfor-tunneld --dry-run --config host.json    # then, on stdin or the socket:
+                                                #   {"cmd":"start","planPath":"plan.json"}
+                                                #   {"cmd":"status"}
 ```
+
+`--plan -` is gone. stdin is the control channel, and a daemon that read its plan
+from there would have nothing left to receive commands on.
 
 ### The relay gap the end-to-end test found
 
@@ -336,76 +341,97 @@ Two things the daemon does own:
   as martians. `netsh` is slow enough that running it on the host loop would
   stall every flow.
 
-Control is JSON lines on stdin, replies on stdout, logs on stderr:
-`{"cmd":"status"}` for counters, `{"cmd":"ping"}` for liveness, `{"cmd":"stop"}`
-to end the session, each with an optional `token`. Exit codes are 0 clean, 1 could
-not run, 2 the session died and the control plane must log in again. The protocol
-is served on stdin for a child process and on a token-gated loopback socket for
-anything without one; `Request::parse` and `reply` are transport-free, so adding
-the socket did not change a line of the protocol.
+Control is JSON lines in, JSON lines out, logs on stderr:
+
+| Verb | Effect |
+|---|---|
+| `{"cmd":"ping"}` | liveness; the only verb that needs no token |
+| `{"cmd":"status"}` | counters and state |
+| `{"cmd":"start","planPath":…,"configPath":…}` | run a session from a plan |
+| `{"cmd":"stopSession"}` | end the session, stay up |
+| `{"cmd":"stop"}` | end the session and exit |
+
+Each takes an optional `token`. Exit codes are 0 clean, 1 could not run, 2 the
+last session died and the control plane must log in again. The protocol is served
+on stdin for a child process and on a token-gated loopback socket for anything
+without one; both end at one `dispatch` function, so they cannot drift apart in
+what they accept or how they report a refusal.
+
+**The process outlives its sessions.** `--plan` means "run this session first",
+not "run this session and exit": afterwards the daemon goes idle and answers
+`start` again. That is what lets one elevated process serve repeated
+connect/disconnect cycles instead of one prompt per connection. It exits on its
+own only when nothing can reach it any more — no socket, stdin closed, no session
+running — which is what a child launched with a piped plan expects.
+
+`start` names its documents by **path** rather than carrying them. The plan holds
+the request signing key, and a loopback socket is reachable by any local process
+that has the token, which is a weaker guarantee than a file's permissions. Routes
+arrive with `configPath` rather than at launch because an installed daemon is
+configured once while which destinations belong in the tunnel depends on what the
+gateway published this session; a per-session document overrides the address,
+routes, DNS servers, and MTU, and deliberately *cannot* override
+`acceptUnpinnedCertificate`, `controlPort`, or `controlToken`.
 
 Verified by running the shipped binary: `--dry-run --check` decodes a plan,
 opens a loopback device, and exits 0 with no driver and no elevation; a live
-`--dry-run` session answers `ping`, returns a `status` snapshot, refuses a
-tokenless `status`, and exits 0 on `stop`. Rust subprocess tests, the Dart client
-test, and `tool/verify_tunneld.ps1` all run that exchange. CI runs all three.
+`--dry-run` daemon starts idle, is given a session, has it stopped, is given
+another, and exits 0 on `stop`. Rust subprocess tests, the Dart client test, and
+`tool/verify_tunneld.ps1` all run that exchange. CI runs all three.
 
-### 6.2 The service wrapper is not written yet, and why
+### 6.2 Removing the elevation prompt: a logon task, not a service
 
 The remaining Phase 4 win is removing elevation from the app: the runner's
 manifest is `asInvoker`, so `WintunCreateAdapter` fails outright today and the
-whole app has to be run as administrator to use the VPN on Windows. A service
-running as LocalSystem creates the adapter itself and the app never needs a
-prompt.
+whole app has to be run as administrator to use the VPN on Windows.
 
-The obvious design is a loopback socket, which already exists, plus an
-always-running service the app talks to. It does not survive contact with the
-threat model:
+The obvious design — a loopback socket plus an always-running LocalSystem
+service — does not survive contact with the threat model:
 
 - A loopback socket cannot identify its peer. `GetNamedPipeClientProcessId` has no
   TCP equivalent, so any local process that has the token can start, stop, or
   **replace** a session.
-- The token cannot be made per-user, because the service is installed once and
-  runs as LocalSystem while the app runs as whoever is logged in. Storing it
-  where the app can read it means storing it where any local user can read it,
-  which makes it a speed bump rather than a control.
-- What crosses that socket would be a session plan, i.e. the signing key. An
-  unauthenticated local process able to inject or replace one is a worse position
-  than the elevation prompt is.
+- The token cannot be made per-user, because a service is installed once and runs
+  as LocalSystem while the app runs as whoever is logged in. Storing it where the
+  app can read it means storing it where any local user can read it, which makes
+  it a speed bump rather than a control.
+- A service binary must call `StartServiceCtrlDispatcher` and report
+  `SERVICE_RUNNING`, or the SCM kills it after roughly thirty seconds with error
+  1053. That is new platform code whose only test is installing a service.
 
-So the honest answer is a **named pipe** with the client's process identity
-checked — `GetNamedPipeClientProcessId`, then the process's user and session, and
-accept only an interactive user on the console session. That is the idiomatic
-Windows mechanism and the reason products use it. It is also roughly sixty lines
-of Win32 with a `SECURITY_DESCRIPTOR`, and none of it can be exercised without
-installing a service as administrator.
+What is implemented instead is a **logon task with `/RL HIGHEST`**
+(`sangfor-tunneld --install`), which sidesteps all three:
 
-Shipping that blind is the wrong trade. A broken daemon is a failed process; a
-broken *service* is something a user has to notice, diagnose, and uninstall with
-`sc delete`, and the failure mode of getting a pipe DACL wrong is either "the app
-cannot talk to it" or "anything can". Both are worse than not having it yet.
+- It runs in the *user's* session, elevated. `127.0.0.1` is the loopback the app
+  is already on, so the control protocol works unchanged.
+- Its configuration lives in `%LOCALAPPDATA%\sangfor-tunneld`, so the token in it
+  is readable by that user and by administrators — a real boundary rather than a
+  decorative one.
+- It needs no new code in the daemon: the task starts the same binary with the
+  same flags, and the daemon's stdin is simply closed, which the supervisor
+  already handles.
 
-What is recorded here instead, so the next step is specified rather than
-rediscovered:
+What it does not give you is a tunnel that outlives logoff. For a VPN a single
+signed-in user drives, that is the right trade.
 
-1. A supervisor loop in the daemon: idle → `start` with an inline plan → run one
-   session → `stop-session` → idle. The single-session lifecycle currently exits
-   the process, which is right for a child and wrong for a service.
-2. A `pipe` transport behind the same `Request`/`reply` protocol, with client
-   process validation, and the loopback socket kept for development.
-3. SCM registration via the `windows-service` crate (pure Rust, so the
-   no-C-toolchain property holds), `start= auto`, with
-   `SERVICE_START_PENDING`/`RUNNING`/`STOP_PENDING` transitions and a checkpoint,
-   because a service that reports `RUNNING` before the tunnel is up gets killed by
-   the SCM's start timeout.
-4. `--install-service` / `--uninstall-service` generating the `sc create` and
-   `sc failure` command lines as data, so they can be unit-tested and printed for
-   a human to run once, elevated, and see exactly what they do.
+The install commands are generated as **data** (`service::Install`), so the task
+name, the elevated flag, the quoting of a path with a space in it, and the
+document written beside the binary are all unit-tested; only handing them to
+`schtasks` is not, because that needs the elevation the module exists to obtain.
+`--print-install` prints them for a packager to run by hand.
 
-Steps 1 and 4 are testable without elevation and are worth doing on their own: a
-supervisor lets one long-lived elevated daemon serve repeated connect/disconnect
-cycles, which is what the app actually wants even before a service exists.
+Quoting is the part worth the tests. `/TR` takes a whole command line as one
+argument, and Windows' rule is that a run of backslashes before a quote is
+half-consumed escaping it — so a path ending in `\` would otherwise swallow the
+closing quote and glue the next argument onto it. A round-trip test parses each
+rendered command back into argv and compares.
 
+A named pipe with client-process validation remains the right answer for a true
+service, and is roughly sixty lines of Win32 with a `SECURITY_DESCRIPTOR`. It is
+still not written, for the reason in the previous revision of this section: none
+of it can be exercised without installing a service as administrator, and the
+failure mode of getting a pipe DACL wrong is either "the app cannot talk to it"
+or "anything can".
 
 ## 7. The session plan is the contract
 

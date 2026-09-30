@@ -828,6 +828,7 @@ dependencies = [
 name = "sangfor-tunneld"
 version = "0.1.0"
 dependencies = [
+ "getrandom",
  "sangfor-core",
  "sangfor-host",
  "sangfor-tls",
