@@ -10,6 +10,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const TOKEN: &str = "test-token";
@@ -177,6 +178,49 @@ fn a_client_that_arrives_after_the_daemon_has_idled_is_answered() {
         &format!(r#"{{"cmd":"status","token":"{TOKEN}"}}"#),
     );
     assert!(reply.contains(r#""ok":true"#), "status after idle: {reply}");
+}
+
+#[test]
+fn a_client_that_pauses_before_and_between_writes_is_still_served() {
+    // Regression. An accepted socket inherits non-blocking mode from the
+    // listener on Windows -- Linux does not do this -- so a read that ran ahead
+    // of the request returned WSAEWOULDBLOCK and the daemon hung up on the
+    // client. Every other test here writes the moment it connects and so won
+    // that race every time; a real client that awaits an event-loop turn between
+    // connecting and writing lost it, which is how this was found.
+    let daemon = start("slow-client");
+    let mut socket = TcpStream::connect(("127.0.0.1", daemon.port)).expect("the socket accepts");
+    socket.set_read_timeout(Some(WAIT)).expect("settable");
+    socket.set_write_timeout(Some(WAIT)).expect("settable");
+
+    // Pausing before the first request is what a Dart or Kotlin client does:
+    // the connect completes, and the write happens on a later turn.
+    thread::sleep(Duration::from_millis(500));
+    socket.write_all(b"{\"cmd\":\"ping\"}\n").expect("writable");
+    socket.flush().expect("flushed");
+    assert_eq!(read_line(&mut socket), r#"{"ok":true}"#);
+
+    // And again between requests, which exercises the same read path after the
+    // connection has already carried traffic.
+    thread::sleep(Duration::from_millis(500));
+    socket
+        .write_all(format!("{{\"cmd\":\"status\",\"token\":\"{TOKEN}\"}}\n").as_bytes())
+        .expect("writable");
+    socket.flush().expect("flushed");
+    let reply = read_line(&mut socket);
+    assert!(
+        reply.contains(r#""ok":true"#),
+        "status after a pause: {reply}"
+    );
+}
+
+/// Reads one newline-terminated reply.
+fn read_line(socket: &mut TcpStream) -> String {
+    let mut line = String::new();
+    BufReader::new(&mut *socket)
+        .read_line(&mut line)
+        .expect("the daemon replies");
+    line.trim().to_string()
 }
 
 #[test]

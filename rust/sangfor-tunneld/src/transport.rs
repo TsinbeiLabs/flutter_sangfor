@@ -156,6 +156,10 @@ pub fn spawn(
 }
 
 /// Serves one client until it disconnects, hits a deadline, or asks to stop.
+///
+/// Every exit path is logged with its reason. A control client being dropped
+/// silently is very hard to diagnose from the far side: the app sees a closed
+/// socket and cannot tell a refused token from a crashed thread from a timeout.
 fn serve(
     mut socket: TcpStream,
     token: Option<&str>,
@@ -163,12 +167,26 @@ fn serve(
     stop: &HostHandle,
     log: &Logger,
 ) {
-    let _ = socket.set_read_timeout(Some(CLIENT_TIMEOUT));
-    let _ = socket.set_write_timeout(Some(CLIENT_TIMEOUT));
     let peer = socket
         .peer_addr()
         .map(|address| address.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
+    // Put the connection back into blocking mode.
+    //
+    // The listener is non-blocking so `shutdown` is noticed promptly, and on
+    // Windows an accepted socket *inherits* that mode — Linux does not do this,
+    // which is why the bug only showed up against a client that paused between
+    // connecting and writing. Without this, the first read returns
+    // `WSAEWOULDBLOCK` instead of waiting for the request, and `serve` ends
+    // before the client has said anything.
+    if let Err(error) = socket.set_nonblocking(false) {
+        log.line(&format!(
+            "the control client at {peer} could not be served: {error}"
+        ));
+        return;
+    }
+    let _ = socket.set_read_timeout(Some(CLIENT_TIMEOUT));
+    let _ = socket.set_write_timeout(Some(CLIENT_TIMEOUT));
     let reader = BufReader::new(match socket.try_clone() {
         Ok(clone) => clone,
         Err(error) => {
@@ -179,8 +197,14 @@ fn serve(
         }
     });
     for line in reader.lines() {
-        let Ok(line) = line else {
-            return;
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                log.line(&format!(
+                    "the control client at {peer} ended: reading failed ({error})"
+                ));
+                return;
+            }
         };
         if line.trim().is_empty() {
             continue;
@@ -194,7 +218,10 @@ fn serve(
             }
             Err(error) => (Reply::failed(error), Action::None),
         };
-        if write_reply(&mut socket, &reply).is_err() {
+        if let Err(error) = write_reply(&mut socket, &reply) {
+            log.line(&format!(
+                "the control client at {peer} ended: replying failed ({error})"
+            ));
             return;
         }
         if action == Action::Stop {
@@ -205,6 +232,7 @@ fn serve(
             return;
         }
     }
+    log.line(&format!("the control client at {peer} disconnected"));
 }
 
 /// Writes one reply line and flushes it. A client that reads a line at a time
