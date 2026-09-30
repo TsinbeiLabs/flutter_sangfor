@@ -21,7 +21,7 @@ use sangfor_host::{Host, HostConfig, HostEvent, HostObserver, Statistics, TlsCon
 use sangfor_tls::TrustPolicy;
 
 use crate::config::HostConfig as DaemonConfig;
-use crate::control::{reply, Action, Command, Reply, Snapshot};
+use crate::control::{reply, Action, Reply, Request, Snapshot};
 use crate::device::OpenedDevice;
 use crate::netconfig::{self, InterfaceConfig};
 
@@ -250,6 +250,43 @@ pub fn run(
     });
 
     let handle = host.handle();
+    if let Ok(mut snapshot_guard) = snapshot.lock() {
+        snapshot_guard.interface = Some(config.interface.clone());
+    }
+    // The loopback control socket is what an app uses to drive a service, which
+    // has no stdin. Bound before the configurator so a launcher that polls for
+    // readiness cannot miss the window.
+    let mut listener = None;
+    if let Some(port) = config.control_port {
+        if config.control_token.is_none() {
+            log.line(
+                "WARNING: the control socket has no token, so any local process can read \
+                 counters and stop the tunnel; set controlToken unless this is a \
+                 development run",
+            );
+        }
+        match crate::transport::spawn(
+            port,
+            config.control_token.clone(),
+            Arc::clone(&snapshot),
+            handle.clone(),
+            Arc::clone(&log),
+        ) {
+            Ok(bound) => {
+                log.line(&format!(
+                    "control socket listening on 127.0.0.1:{}",
+                    bound.port
+                ));
+                listener = Some(bound);
+            }
+            Err(error) => {
+                // Not fatal: stdin still works, and for a service the SCM can
+                // still stop it. Failing to start the tunnel over a busy port
+                // would be worse than running without counters.
+                log.line(&format!("the control socket could not be opened: {error}"));
+            }
+        }
+    }
     spawn_configurator(
         vip_rx,
         config.clone(),
@@ -258,7 +295,7 @@ pub fn run(
         Arc::clone(&snapshot),
         Arc::clone(&log),
     );
-    spawn_control(Arc::clone(&snapshot), handle);
+    spawn_control(Arc::clone(&snapshot), config.control_token.clone(), handle);
 
     log.line(&format!(
         "starting the tunnel on {} ({:?})",
@@ -267,6 +304,9 @@ pub fn run(
         config.device
     ));
     let result = host.run();
+    if let Some(mut listener) = listener {
+        listener.shutdown();
+    }
     let fatal = snapshot
         .lock()
         .ok()
@@ -377,10 +417,15 @@ fn spawn_configurator(
 /// Serves the control protocol on stdin/stdout.
 ///
 /// Not joined: when the host loop ends, `main` returns and the process exits,
-/// which is the only reliable way to end a thread blocked reading a console.
-fn spawn_control(snapshot: Arc<Mutex<Snapshot>>, handle: sangfor_host::HostHandle) {
+/// which is the only reliable way to end a thread blocked reading a console. A
+/// service has no console and gets [`crate::transport`] instead.
+fn spawn_control(
+    snapshot: Arc<Mutex<Snapshot>>,
+    token: Option<String>,
+    handle: sangfor_host::HostHandle,
+) {
     thread::Builder::new()
-        .name("sangfor-control".to_string())
+        .name("sangfor-stdin-control".to_string())
         .spawn(move || {
             let stdin = io::stdin();
             let stdout = io::stdout();
@@ -392,12 +437,12 @@ fn spawn_control(snapshot: Arc<Mutex<Snapshot>>, handle: sangfor_host::HostHandl
                 if line.trim().is_empty() {
                     continue;
                 }
-                let (reply, action) = match Command::parse(&line) {
-                    Ok(command) => {
+                let (reply, action) = match Request::parse(&line) {
+                    Ok(request) => {
                         let current = snapshot
                             .lock()
                             .map_or_else(|_| Snapshot::default(), |guard| guard.clone());
-                        reply(command, &current)
+                        reply(&request, &current, token.as_deref())
                     }
                     Err(error) => (Reply::failed(error), Action::None),
                 };

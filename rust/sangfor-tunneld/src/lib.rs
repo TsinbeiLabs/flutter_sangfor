@@ -40,6 +40,7 @@ pub mod control;
 pub mod device;
 pub mod netconfig;
 pub mod runtime;
+pub mod transport;
 
 pub use config::{DeviceKind, HostConfig};
 pub use netconfig::InterfaceConfig;

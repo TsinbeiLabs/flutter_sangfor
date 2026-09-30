@@ -108,6 +108,23 @@ pub struct HostConfig {
     #[serde(default = "default_connect_timeout_seconds")]
     pub connect_timeout_seconds: u64,
 
+    /// A loopback port to serve the control protocol on, in addition to stdin.
+    ///
+    /// A service has no stdin, so this is how an app drives one. `None` leaves
+    /// the socket closed and stdin as the only channel; `0` picks a free port,
+    /// which the process then reports in its log.
+    #[serde(default)]
+    pub control_port: Option<u16>,
+
+    /// The shared secret a control client must present for `status` and `stop`.
+    ///
+    /// `ping` never needs it, so a service manager can probe liveness first.
+    /// Leaving this unset makes the control channel open to any local process,
+    /// which the process warns about at startup. See [`crate::transport`] for
+    /// what that does and does not expose.
+    #[serde(default)]
+    pub control_token: Option<String>,
+
     /// Where to write JSON status lines. `None` logs to stderr.
     #[serde(default)]
     pub log_path: Option<PathBuf>,
@@ -148,6 +165,8 @@ impl Default for HostConfig {
             mtu: default_mtu(),
             accept_unpinned_certificate: default_accept_unpinned(),
             connect_timeout_seconds: default_connect_timeout_seconds(),
+            control_port: None,
+            control_token: None,
             log_path: None,
         }
     }
@@ -378,5 +397,17 @@ mod tests {
         assert_eq!(prefix_mask(1), 0x8000_0000);
         assert_eq!(prefix_mask(8), 0xff00_0000);
         assert_eq!(prefix_mask(32), u32::MAX);
+    }
+
+    #[test]
+    fn the_control_channel_is_off_unless_asked_for() {
+        let config = HostConfig::decode(b"{}").expect("decodes");
+        assert!(config.control_port.is_none());
+        assert!(config.control_token.is_none());
+
+        let config =
+            HostConfig::decode(br#"{"controlPort":0,"controlToken":"s3cret"}"#).expect("decodes");
+        assert_eq!(config.control_port, Some(0), "0 means pick a free port");
+        assert_eq!(config.control_token.as_deref(), Some("s3cret"));
     }
 }
