@@ -21,6 +21,7 @@ pub mod l3;
 pub mod packet;
 pub mod plan;
 pub mod plane;
+pub mod relay;
 pub mod route;
 pub mod tcp_tunnel;
 pub mod terminator;

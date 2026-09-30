@@ -32,6 +32,13 @@ pub enum Effect {
         host: String,
         /// Destination port.
         port: u16,
+        /// The address the flow was actually addressed to, host order.
+        ///
+        /// Not what gets dialled when the resource was published as a domain —
+        /// [Self::Dial::host] is the alias. The gateway signs both, so the
+        /// auth request needs the original: `destAddr` carries the name and
+        /// `destIP` carries this.
+        destination: u32,
     },
     /// Write relayed bytes upstream.
     RelaySend {
@@ -482,6 +489,7 @@ impl<P: TerminationPolicy> Terminator<P> {
             dial,
             host,
             port: key.server_port,
+            destination: key.server,
         });
     }
 

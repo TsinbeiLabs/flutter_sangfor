@@ -99,7 +99,9 @@ fn dials(effects: &[Effect]) -> Vec<(u64, String, u16)> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Dial { dial, host, port } => Some((*dial, host.clone(), *port)),
+            Effect::Dial {
+                dial, host, port, ..
+            } => Some((*dial, host.clone(), *port)),
             _ => None,
         })
         .collect()
@@ -522,6 +524,7 @@ fn effects_are_sendable_across_threads() {
         dial: 1,
         host: "host".to_string(),
         port: 443,
+        destination: 0,
     };
     assert_send(&effect);
     let now: Millis = 0;

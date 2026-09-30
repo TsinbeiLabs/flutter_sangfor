@@ -14,6 +14,7 @@ use sangfor_core::json::{self, Json};
 use sangfor_core::l3::{self, AuthRequest, IpInfo, ProcessInfo};
 use sangfor_core::packet::{self, build_packet_meta, build_tcp, flag, TcpPacketParams};
 use sangfor_core::plan::{parse_endpoint, SessionPlan};
+use sangfor_core::relay::{self, Relay};
 use sangfor_core::route::RouteTable;
 use sangfor_core::tcp_tunnel::{self, AuthRequest as TcpAuthRequest};
 
@@ -380,6 +381,49 @@ fn tcp_tunnel_frames_and_signatures_match() {
     }
     assert_eq!(decoder.response(), Some(&response));
     assert!(leftover.expect("leftover").is_empty());
+}
+
+#[test]
+fn a_relay_opens_and_accepts_with_the_recorded_bytes() {
+    // `tcp_tunnel_frames_and_signatures_match` pins the protocol functions. This
+    // pins the relay that actually uses them, so a change to how the opening
+    // message is assembled or how the hello is consumed fails here rather than
+    // only against a live gateway.
+    let fixture = fixture();
+    let sign_key = unhex(&text(&fixture, &["signKeyHex"]));
+    let fingerprint = text(&fixture, &["processFingerprint"]);
+    let request = tcp_auth_request(&fingerprint);
+
+    let mut relay = Relay::connecting(1, "vpn.example.test:443", 0);
+    let opening = relay
+        .start(&request, &sign_key, false)
+        .expect("the opening message builds");
+    assert_eq!(
+        crypto::hex_lower(&opening),
+        text(&fixture, &["tcpTunnel", "handshakeHex"]),
+        "a relay must open with exactly the recorded handshake"
+    );
+    assert_eq!(relay.state(), relay::State::Handshaking);
+
+    // Payload offered before the hello is held, not sent: the gateway rejects
+    // anything that arrives ahead of its answer.
+    assert!(relay.send(b"early").expect("sendable").is_none());
+
+    let hello = unhex(&text(&fixture, &["tcpTunnel", "serverResponseHex"]));
+    match relay.receive(&hello).expect("the hello parses") {
+        relay::Outcome::Opened(payloads) => assert!(payloads.is_empty()),
+        other => panic!("the recorded hello should open the relay, got {other:?}"),
+    }
+    assert!(relay.is_open());
+    assert!(
+        !relay.is_framed(),
+        "the recorded hello offers no reuse, so the relay stays raw"
+    );
+    assert_eq!(
+        relay.flush().expect("flushable").expect("the held bytes"),
+        b"early".to_vec(),
+        "the held payload goes out verbatim once the relay opens"
+    );
 }
 
 #[test]

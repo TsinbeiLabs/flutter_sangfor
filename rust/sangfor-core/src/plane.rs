@@ -14,7 +14,9 @@ use crate::flow::{FlowKey, FlowState, FlowTracker, Millis};
 use crate::l3::{self, AuthRequest, Command, Frame, FrameDecoder, HandshakeParser, IpInfo};
 use crate::packet::{build_packet_meta, split_incoming_packets, TCP};
 use crate::plan::SessionPlan;
+use crate::relay::{Outcome, Relay};
 use crate::route::{Route, RouteTable};
+use crate::tcp_tunnel;
 use crate::terminator::{Effect, TerminationPolicy, Terminator, TerminatorConfig};
 
 /// What the host must do on the plane's behalf.
@@ -256,6 +258,10 @@ pub struct DataPlane {
     terminator: Terminator<PlanPolicy>,
     flows: FlowTracker,
     nodes: Vec<NodeConnection>,
+    /// The TCP-tunnel relays the terminator asked for, keyed by dial. The
+    /// terminator speaks plain TCP; these carry the gateway's auth handshake and
+    /// framing so it does not have to.
+    relays: Vec<Relay>,
     next_connection: u64,
     statistics: Statistics,
     virtual_ip: Vec<String>,
@@ -282,6 +288,7 @@ impl DataPlane {
             terminator,
             flows: FlowTracker::new(),
             nodes: Vec::new(),
+            relays: Vec::new(),
             next_connection: 0,
             statistics: Statistics::default(),
             virtual_ip: Vec::new(),
@@ -485,6 +492,12 @@ impl DataPlane {
     /// The host finished a TCP-tunnel dial for a terminated flow.
     pub fn on_dial_connected(&mut self, dial: u64, now: Millis) -> Vec<PlaneEffect> {
         let mut effects = Vec::new();
+        // The gateway's auth handshake goes out first. It rejects payload that
+        // arrives ahead of it, and the terminator's first flight would otherwise
+        // be on the wire the moment the socket opened.
+        if !self.open_relay(dial, &mut effects) {
+            return effects;
+        }
         for effect in self.terminator.on_dial_connected(dial, now) {
             self.push_terminator_effect(effect, &mut effects);
         }
@@ -493,6 +506,7 @@ impl DataPlane {
 
     /// The host could not dial a terminated flow.
     pub fn on_dial_failed(&mut self, dial: u64, message: &str) -> Vec<PlaneEffect> {
+        self.relays.retain(|relay| relay.dial() != dial);
         let mut effects = Vec::new();
         for effect in self.terminator.on_dial_failed(dial, message) {
             self.push_terminator_effect(effect, &mut effects);
@@ -503,14 +517,43 @@ impl DataPlane {
     /// Bytes arrived from a TCP-tunnel dial.
     pub fn on_relay_data(&mut self, dial: u64, data: &[u8], now: Millis) -> Vec<PlaneEffect> {
         let mut effects = Vec::new();
-        for effect in self.terminator.on_relay_data(dial, data, now) {
-            self.push_terminator_effect(effect, &mut effects);
+        let Some(index) = self.relay_index(dial) else {
+            // The dial is already gone; the terminator has been told, so these
+            // bytes have nowhere to go.
+            return effects;
+        };
+        let outcome = match self.relays[index].receive(data) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let message = format!("relay {dial} received malformed bytes: {error}");
+                self.relays[index].abort(message.clone());
+                self.fail_relay(dial, &message, &mut effects);
+                return effects;
+            }
+        };
+        match outcome {
+            Outcome::Refused(reason) => {
+                let message = format!("relay {dial}: {reason}");
+                self.fail_relay(dial, &message, &mut effects);
+            }
+            Outcome::Opened(payloads) => {
+                // Release the terminator's held first flight before forwarding
+                // the reply, so the wire order is the one the gateway expects.
+                if let Ok(Some(held)) = self.relays[index].flush() {
+                    effects.push(PlaneEffect::RelaySend { dial, bytes: held });
+                }
+                self.forward_payloads(dial, payloads, now, &mut effects);
+            }
+            Outcome::Payloads(payloads) => {
+                self.forward_payloads(dial, payloads, now, &mut effects);
+            }
         }
         effects
     }
 
     /// A TCP-tunnel dial ended.
     pub fn on_relay_closed(&mut self, dial: u64, now: Millis) -> Vec<PlaneEffect> {
+        self.relays.retain(|relay| relay.dial() != dial);
         let mut effects = Vec::new();
         for effect in self.terminator.on_relay_closed(dial, now) {
             self.push_terminator_effect(effect, &mut effects);
@@ -536,6 +579,7 @@ impl DataPlane {
             }
         }
         self.nodes.clear();
+        self.relays.clear();
         self.flows.clear();
         effects
     }
@@ -1045,6 +1089,140 @@ impl DataPlane {
         self.nodes.iter().position(|node| node.id == connection)
     }
 
+    /// Registers a relay for a dial the terminator asked for.
+    fn begin_relay(&mut self, dial: u64, host: &str, port: u16, destination: u32) {
+        self.relays.retain(|relay| relay.dial() != dial);
+        self.relays.push(Relay::connecting(
+            dial,
+            format!("{host}:{port}"),
+            destination,
+        ));
+    }
+
+    fn relay_index(&self, dial: u64) -> Option<usize> {
+        self.relays.iter().position(|relay| relay.dial() == dial)
+    }
+
+    /// Hands terminator output to its relay, which holds it until the gateway's
+    /// hello arrives.
+    fn push_relay_send(&mut self, dial: u64, bytes: Vec<u8>, effects: &mut Vec<PlaneEffect>) {
+        let Some(index) = self.relay_index(dial) else {
+            return;
+        };
+        match self.relays[index].send(&bytes) {
+            Ok(Some(wire)) => effects.push(PlaneEffect::RelaySend { dial, bytes: wire }),
+            // Held until the hello arrives.
+            Ok(None) => {}
+            Err(error) => {
+                let message = format!("relay {dial} could not be framed: {error}");
+                self.relays[index].abort(message.clone());
+                effects.push(PlaneEffect::Error(message));
+            }
+        }
+    }
+
+    /// Sends the signed opening message for a relay that just connected.
+    ///
+    /// Returns false when the relay could not be opened, in which case the dial
+    /// has already been failed and the effects for that are queued.
+    fn open_relay(&mut self, dial: u64, effects: &mut Vec<PlaneEffect>) -> bool {
+        let Some(index) = self.relay_index(dial) else {
+            effects.push(PlaneEffect::Error(format!(
+                "dial {dial} connected but no relay was registered"
+            )));
+            return false;
+        };
+        let Some(sign_key) = self.plan.sign_key() else {
+            return self.fail_relay(dial, "the session plan carries no signing key", effects);
+        };
+        let Some(request) = self.relay_auth_request(&self.relays[index]) else {
+            let dest = self.relays[index].dest_addr().to_string();
+            return self.fail_relay(
+                dial,
+                &format!("no TCP tunnel resource covers {dest}"),
+                effects,
+            );
+        };
+        match self.relays[index].start(&request, &sign_key, false) {
+            Ok(message) => {
+                effects.push(PlaneEffect::RelaySend {
+                    dial,
+                    bytes: message,
+                });
+                true
+            }
+            Err(error) => self.fail_relay(
+                dial,
+                &format!("the TCP tunnel handshake could not be built: {error}"),
+                effects,
+            ),
+        }
+    }
+
+    /// Tells the terminator a relay is not coming, and reports why.
+    fn fail_relay(&mut self, dial: u64, message: &str, effects: &mut Vec<PlaneEffect>) -> bool {
+        if let Some(index) = self.relay_index(dial) {
+            self.relays[index].abort(message.to_string());
+        }
+        effects.push(PlaneEffect::Error(message.to_string()));
+        for effect in self.terminator.on_dial_failed(dial, message) {
+            self.push_terminator_effect(effect, effects);
+        }
+        false
+    }
+
+    fn forward_payloads(
+        &mut self,
+        dial: u64,
+        payloads: Vec<Vec<u8>>,
+        now: Millis,
+        effects: &mut Vec<PlaneEffect>,
+    ) {
+        for payload in payloads {
+            for effect in self.terminator.on_relay_data(dial, &payload, now) {
+                self.push_terminator_effect(effect, effects);
+            }
+        }
+    }
+
+    /// The signed auth request for a relay, or `None` when the plan cannot
+    /// produce one.
+    fn relay_auth_request(&self, relay: &Relay) -> Option<tcp_tunnel::AuthRequest> {
+        let (host, port) = split_destination(relay.dest_addr())?;
+        let route = self.find_tcp_route(host, port)?;
+        Some(tcp_tunnel::AuthRequest {
+            sid: self.plan.sid.clone(),
+            app_id: route.app_id.clone(),
+            url: format!("tcp://{}", relay.dest_addr()),
+            device_id: self.plan.device_id.clone(),
+            connection_id: self.plan.connection_id.clone(),
+            proc_hash: self.plan.fingerprint(),
+            user_name: self.plan.username.clone(),
+            lang: self.plan.lang.clone(),
+            dest_addr: relay.dest_addr().to_string(),
+            // A domain-published resource sends the resolved address so the
+            // gateway does not have to look the name up. `addrPretend` means it
+            // must not, because the gateway is presenting a different address
+            // than the one the flow used.
+            dest_ip: if route.addr_pretend {
+                None
+            } else {
+                Some(crate::packet::ipv4_text(relay.resolved()))
+            },
+            rc_applied_info: 0,
+            process: Some(self.plan.process()),
+        })
+    }
+
+    /// The resource that covers a dial, preferring the TCP-tunnel match the
+    /// terminator already made and falling back to an L3-preferred one.
+    fn find_tcp_route(&self, host: &str, port: u16) -> Option<&Route> {
+        let table = self.policy.table();
+        table
+            .match_tcp(host, port, false)
+            .or_else(|| table.match_tcp(host, port, true))
+    }
+
     fn push_terminator_effect(&mut self, effect: Effect, effects: &mut Vec<PlaneEffect>) {
         match effect {
             Effect::EmitPacket(packet) => {
@@ -1052,14 +1230,34 @@ impl DataPlane {
                 self.statistics.ingress_bytes += packet.len() as u64;
                 effects.push(PlaneEffect::EmitPacket(packet));
             }
-            Effect::Dial { dial, host, port } => {
-                effects.push(PlaneEffect::Dial { dial, host, port })
+            Effect::Dial {
+                dial,
+                host,
+                port,
+                destination,
+            } => {
+                self.begin_relay(dial, &host, port, destination);
+                effects.push(PlaneEffect::Dial { dial, host, port });
             }
-            Effect::RelaySend { dial, bytes } => {
-                effects.push(PlaneEffect::RelaySend { dial, bytes })
+            Effect::RelaySend { dial, bytes } => self.push_relay_send(dial, bytes, effects),
+            Effect::RelayCloseWrite { dial } => {
+                // In framed mode a half-close is a record on the wire; in raw
+                // mode it is the transport's business, which is what the host
+                // does with the effect.
+                if let Some(frame) = self
+                    .relays
+                    .iter()
+                    .find(|relay| relay.dial() == dial)
+                    .and_then(Relay::close_write)
+                {
+                    effects.push(PlaneEffect::RelaySend { dial, bytes: frame });
+                }
+                effects.push(PlaneEffect::RelayCloseWrite { dial });
             }
-            Effect::RelayCloseWrite { dial } => effects.push(PlaneEffect::RelayCloseWrite { dial }),
-            Effect::RelayClose { dial } => effects.push(PlaneEffect::RelayClose { dial }),
+            Effect::RelayClose { dial } => {
+                effects.push(PlaneEffect::RelayClose { dial });
+                self.relays.retain(|relay| relay.dial() != dial);
+            }
             Effect::RelayPause { dial, paused } => {
                 effects.push(PlaneEffect::RelayPause { dial, paused });
             }
@@ -1071,3 +1269,14 @@ impl DataPlane {
 /// The TCP protocol number, re-exported for hosts that route packets
 /// themselves.
 pub const TCP_PROTOCOL: u8 = TCP;
+
+/// Splits a `host:port` destination. IPv6 literals are not bracketed here
+/// because the terminator only ever produces IPv4 destinations and bare host
+/// names, matching what the gateway's `destAddr` field carries.
+fn split_destination(dest_addr: &str) -> Option<(&str, u16)> {
+    let (host, port) = dest_addr.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port.parse().ok()?))
+}
