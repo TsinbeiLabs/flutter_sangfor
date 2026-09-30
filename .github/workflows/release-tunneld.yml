@@ -60,8 +60,9 @@ jobs:
     env:
       # Nothing in the dependency graph needs a C compiler -- crypto is
       # RustCrypto, TLS is rustls on the RustCrypto provider, the event loop is
-      # `mio` -- so the *only* thing a foreign target needs is a linker that can
-      # produce its ABI. This is the variable cargo reads for that.
+      # `mio` -- so the *only* thing a foreign target needs is a linker and the
+      # C runtime it links against. This is the variable cargo reads for the
+      # linker.
       #
       # It is also why the `rust-core` CI job cross-compiles libraries and not
       # this binary: `cargo build` of an rlib never links, so it needs no
@@ -78,11 +79,17 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Install the cross linker
+      - name: Install the cross toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y gcc-aarch64-linux-gnu
+          # Two packages, and both are needed. `gcc-aarch64-linux-gnu` is the
+          # linker driver; `libc6-dev-arm64-cross` is the target's C runtime,
+          # which is where `Scrt1.o` and `crti.o` come from. Installing only the
+          # compiler gets as far as the link and then fails with
+          # "cannot find Scrt1.o", which does not name the missing package.
+          sudo apt-get install --no-install-recommends -y \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           aarch64-linux-gnu-gcc --version | head -1
 
       # The workspace release profile is already size-tuned (opt-level="z", lto,
