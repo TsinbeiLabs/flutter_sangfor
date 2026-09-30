@@ -18,6 +18,7 @@ export 'src/system_proxy.dart';
 export 'src/tcp_terminator.dart';
 export 'src/wintun.dart';
 export 'src/tun_device.dart';
+export 'src/tunnel_daemon.dart';
 export 'src/fd_packet_device.dart';
 export 'src/utun_device.dart';
 export 'src/android_vpn.dart';
