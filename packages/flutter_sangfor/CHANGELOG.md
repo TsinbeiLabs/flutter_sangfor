@@ -1,3 +1,9 @@
+## Unreleased
+
+* Fix iOS builds by sharing one tunnel error enum and converting the TLS trust
+  wrapper to `SecTrust` for certificate pinning. Keep IPv6 parsing compatible
+  with the package's iOS 15 deployment target.
+
 ## 0.0.10
 
 * `SangforTunnelInstalledDaemon.diagnoseUnavailable()` explains *why* there is

@@ -376,7 +376,7 @@ public enum SangforAddressBytes {
       embeddedIPv4 = ipv4
       head = String(head[..<lastColon]) + ":0:0"
     }
-    let halves = head.split(separator: "::", omittingEmptySubsequences: false)
+    let halves = head.components(separatedBy: "::").map { Substring($0) }
     guard halves.count <= 2 else { return nil }
 
     func groups(_ text: Substring) -> [UInt16]? {
