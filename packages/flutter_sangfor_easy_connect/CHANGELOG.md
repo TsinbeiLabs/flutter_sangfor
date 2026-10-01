@@ -1,3 +1,7 @@
+## 0.0.11
+
+* Depend on flutter_sangfor 0.0.11 with the iOS build compatibility fixes.
+
 ## 0.0.10
 
 * Lockstep release with `flutter_sangfor` 0.0.10.
