@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "flutter_sangfor",
     platforms: [
-        .iOS("16.0")
+        .iOS("15.0")
     ],
     products: [
         .library(name: "flutter-sangfor", targets: ["flutter_sangfor"]),
