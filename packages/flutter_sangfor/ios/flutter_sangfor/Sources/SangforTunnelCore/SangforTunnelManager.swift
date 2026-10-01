@@ -19,7 +19,7 @@ extension NEVPNStatus {
 
 /// Errors surfaced by the tunnel manager and translated into method-channel
 /// error codes for the Dart side.
-public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
+public enum SangforTunnelManagerError: Error, CustomStringConvertible, Equatable {
   /// The provider bundle identifier could not be resolved.
   case providerNotConfigured
   /// Saving or loading the VPN configuration failed.
@@ -139,7 +139,7 @@ public final class SangforTunnelManager {
       guard let self else { return }
       if let error {
         completion(
-          SangforTunnelError.managerLoadFailed(error.localizedDescription)
+          SangforTunnelManagerError.managerLoadFailed(error.localizedDescription)
         )
         return
       }
@@ -157,7 +157,7 @@ public final class SangforTunnelManager {
       manager.saveToPreferences { saveError in
         if let saveError {
           completion(
-            SangforTunnelError.managerSaveFailed(saveError.localizedDescription)
+            SangforTunnelManagerError.managerSaveFailed(saveError.localizedDescription)
           )
           return
         }
@@ -165,7 +165,7 @@ public final class SangforTunnelManager {
         manager.loadFromPreferences { loadError in
           if let loadError {
             completion(
-              SangforTunnelError.managerLoadFailed(loadError.localizedDescription)
+              SangforTunnelManagerError.managerLoadFailed(loadError.localizedDescription)
             )
             return
           }
@@ -184,14 +184,14 @@ public final class SangforTunnelManager {
   ) {
     func startLoaded() {
       guard let manager else {
-        completion(SangforTunnelError.providerNotConfigured)
+        completion(SangforTunnelManagerError.providerNotConfigured)
         return
       }
       manager.isEnabled = true
       manager.saveToPreferences { saveError in
         if let saveError {
           completion(
-            SangforTunnelError.managerSaveFailed(saveError.localizedDescription)
+            SangforTunnelManagerError.managerSaveFailed(saveError.localizedDescription)
           )
           return
         }
@@ -200,7 +200,7 @@ public final class SangforTunnelManager {
           completion(nil)
         } catch {
           completion(
-            SangforTunnelError.tunnelStartFailed(error.localizedDescription)
+            SangforTunnelManagerError.tunnelStartFailed(error.localizedDescription)
           )
         }
       }
@@ -243,7 +243,7 @@ public final class SangforTunnelManager {
     guard let session = manager?.connection as? NETunnelProviderSession else {
       completion(
         nil,
-        SangforTunnelError.tunnelStartFailed("The tunnel is not running.")
+        SangforTunnelManagerError.tunnelStartFailed("The tunnel is not running.")
       )
       return
     }

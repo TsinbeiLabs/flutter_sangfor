@@ -228,7 +228,7 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
   }
 
   private func flutterError(for error: Error) -> FlutterError {
-    if let tunnelError = error as? SangforTunnelError {
+    if let tunnelError = error as? SangforTunnelManagerError {
       return FlutterError(
         code: tunnelError.code,
         message: tunnelError.description,

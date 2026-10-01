@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 
 /// A TLS byte channel to a tunnel node, built on Network.framework.
 ///
@@ -173,14 +174,15 @@ public final class SangforTlsChannel: SangforByteChannel {
   /// [digests]. With no pins the deployment advertised no anti-MITM material,
   /// so [acceptAny] decides — matching the Dart client's opportunistic pinning.
   static func trustIsAcceptable(
-    _ trust: SecTrust,
+    _ trust: sec_trust_t,
     digests: [String],
     acceptAny: Bool
   ) -> Bool {
     if digests.isEmpty {
       return acceptAny
     }
-    guard let leaf = SangforTlsChannel.leafCertificateData(trust) else {
+    let trustRef = sec_trust_copy_ref(trust).takeRetainedValue()
+    guard let leaf = SangforTlsChannel.leafCertificateData(trustRef) else {
       return false
     }
     return SangforCertificateDigest.matches(leaf, digests: digests)
