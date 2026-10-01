@@ -1,5 +1,39 @@
 import Foundation
 
+/// Errors the tunnel driver reports.
+public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
+  /// The gateway rejected the tunnel handshake; the session is gone and the
+  /// Runner has to log in again.
+  case tunnelAuthFailed(String)
+  /// A per-flow authentication failed.
+  case flowAuthFailed(String)
+  /// A flow never authenticated in time.
+  case flowAuthTimeout(String)
+  /// The gateway stopped answering heartbeats.
+  case heartbeatTimeout(Int)
+  /// The transport closed or failed.
+  case channelClosed(String)
+  /// The session plan could not be used (bad key, no node, ...).
+  case invalidPlan(String)
+
+  public var description: String {
+    switch self {
+    case .tunnelAuthFailed(let detail): "L3 tunnel auth failed: \(detail)"
+    case .flowAuthFailed(let detail): "flow auth failed: \(detail)"
+    case .flowAuthTimeout(let detail): "flow auth timed out: \(detail)"
+    case .heartbeatTimeout(let misses): "heartbeat timed out after \(misses) misses"
+    case .channelClosed(let detail): "tunnel channel closed: \(detail)"
+    case .invalidPlan(let detail): "invalid session plan: \(detail)"
+    }
+  }
+
+  /// True when the session itself is unusable and the Runner must re-login.
+  public var isFatalForSession: Bool {
+    if case .tunnelAuthFailed = self { return true }
+    return false
+  }
+}
+
 /// The five-tuple identity of a flow.
 public struct ATrustL3FlowKey: Hashable {
   public let protocolNumber: Int

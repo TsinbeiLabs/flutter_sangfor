@@ -19,7 +19,7 @@ extension NEVPNStatus {
 
 /// Errors surfaced by the tunnel manager and translated into method-channel
 /// error codes for the Dart side.
-public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
+public enum SangforTunnelManagerError: Error, CustomStringConvertible, Equatable {
   /// The provider bundle identifier could not be resolved.
   case providerNotConfigured
   /// Saving or loading the VPN configuration failed.
@@ -30,18 +30,6 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
   case tunnelStartFailed(String)
   /// Applying the tunnel network settings failed.
   case networkSettingsFailed(String)
-  /// The gateway rejected the tunnel handshake; the session is gone.
-  case tunnelAuthFailed(String)
-  /// A per-flow authentication failed.
-  case flowAuthFailed(String)
-  /// A flow never authenticated in time.
-  case flowAuthTimeout(String)
-  /// The gateway stopped answering heartbeats.
-  case heartbeatTimeout(Int)
-  /// The transport closed or failed.
-  case channelClosed(String)
-  /// The session plan could not be used.
-  case invalidPlan(String)
 
   public var description: String {
     switch self {
@@ -55,25 +43,7 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
       "Starting the VPN tunnel failed: \(detail)"
     case .networkSettingsFailed(let detail):
       "Applying tunnel network settings failed: \(detail)"
-    case .tunnelAuthFailed(let detail):
-      "L3 tunnel auth failed: \(detail)"
-    case .flowAuthFailed(let detail):
-      "flow auth failed: \(detail)"
-    case .flowAuthTimeout(let detail):
-      "flow auth timed out: \(detail)"
-    case .heartbeatTimeout(let misses):
-      "heartbeat timed out after \(misses) misses"
-    case .channelClosed(let detail):
-      "tunnel channel closed: \(detail)"
-    case .invalidPlan(let detail):
-      "invalid session plan: \(detail)"
     }
-  }
-
-  /// True when the session itself is unusable and the Runner must re-login.
-  public var isFatalForSession: Bool {
-    if case .tunnelAuthFailed = self { return true }
-    return false
   }
 
   /// Stable machine-readable code mirrored on the Dart side.
@@ -84,12 +54,6 @@ public enum SangforTunnelError: Error, CustomStringConvertible, Equatable {
     case .managerLoadFailed: "managerLoadFailed"
     case .tunnelStartFailed: "tunnelStartFailed"
     case .networkSettingsFailed: "networkSettingsFailed"
-    case .tunnelAuthFailed: "tunnelAuthFailed"
-    case .flowAuthFailed: "flowAuthFailed"
-    case .flowAuthTimeout: "flowAuthTimeout"
-    case .heartbeatTimeout: "heartbeatTimeout"
-    case .channelClosed: "channelClosed"
-    case .invalidPlan: "invalidPlan"
     }
   }
 }
@@ -175,7 +139,7 @@ public final class SangforTunnelManager {
       guard let self else { return }
       if let error {
         completion(
-          SangforTunnelError.managerLoadFailed(error.localizedDescription)
+          SangforTunnelManagerError.managerLoadFailed(error.localizedDescription)
         )
         return
       }
@@ -193,7 +157,7 @@ public final class SangforTunnelManager {
       manager.saveToPreferences { saveError in
         if let saveError {
           completion(
-            SangforTunnelError.managerSaveFailed(saveError.localizedDescription)
+            SangforTunnelManagerError.managerSaveFailed(saveError.localizedDescription)
           )
           return
         }
@@ -201,7 +165,7 @@ public final class SangforTunnelManager {
         manager.loadFromPreferences { loadError in
           if let loadError {
             completion(
-              SangforTunnelError.managerLoadFailed(loadError.localizedDescription)
+              SangforTunnelManagerError.managerLoadFailed(loadError.localizedDescription)
             )
             return
           }
@@ -220,14 +184,14 @@ public final class SangforTunnelManager {
   ) {
     func startLoaded() {
       guard let manager else {
-        completion(SangforTunnelError.providerNotConfigured)
+        completion(SangforTunnelManagerError.providerNotConfigured)
         return
       }
       manager.isEnabled = true
       manager.saveToPreferences { saveError in
         if let saveError {
           completion(
-            SangforTunnelError.managerSaveFailed(saveError.localizedDescription)
+            SangforTunnelManagerError.managerSaveFailed(saveError.localizedDescription)
           )
           return
         }
@@ -236,7 +200,7 @@ public final class SangforTunnelManager {
           completion(nil)
         } catch {
           completion(
-            SangforTunnelError.tunnelStartFailed(error.localizedDescription)
+            SangforTunnelManagerError.tunnelStartFailed(error.localizedDescription)
           )
         }
       }
@@ -279,7 +243,7 @@ public final class SangforTunnelManager {
     guard let session = manager?.connection as? NETunnelProviderSession else {
       completion(
         nil,
-        SangforTunnelError.tunnelStartFailed("The tunnel is not running.")
+        SangforTunnelManagerError.tunnelStartFailed("The tunnel is not running.")
       )
       return
     }
