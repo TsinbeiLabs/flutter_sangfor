@@ -12,7 +12,26 @@ updates:
     directory: /packages/flutter_sangfor_easy_connect
     schedule:
       interval: monthly
+  # The Rust data plane was the one graph Dependabot was not watching, which is
+  # how four rustls-webpki advisories sat open in rust/Cargo.lock with patched
+  # releases available and no PR raised for any of them.
+  - package-ecosystem: cargo
+    directory: /rust
+    schedule:
+      interval: monthly
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # setup-swift v3 never imports the Swift release signing key before
+      # verifying the toolchain, so the swift-core job dies on ubuntu-latest
+      # with `gpg: Can't check signature: No public key` (key
+      # E813C892820A6FA13755B268F167DF1ACF9CE069). Reproduced on a re-run, so
+      # not a flake; the action itself prints "Unexpected error, unable to
+      # continue. Please report at .../setup-swift/issues". v2 is pinned to the
+      # latest 2.x and still works. Remove this entry once v3 verifies
+      # signatures -- until then the bump just reopens a red PR every month.
+      - dependency-name: swift-actions/setup-swift
+        update-types:
+          - version-update:semver-major
