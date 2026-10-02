@@ -1,3 +1,7 @@
+## 0.0.12
+
+* Depend on flutter_sangfor 0.0.12, which reports Android VPN revocations.
+
 ## 0.0.11
 
 * Depend on flutter_sangfor 0.0.11 with the iOS build compatibility fixes.

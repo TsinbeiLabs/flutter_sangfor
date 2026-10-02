@@ -1,3 +1,20 @@
+## 0.0.12
+
+* `VpnTunnelService` overrides `onRevoke()` and reports it to Dart as
+  `AndroidVpnDevice.revocations`. Until now the system taking the tunnel away
+  -- the user switching the VPN off in system settings or from the
+  quick-settings tile, or another `VpnService` taking over -- was invisible to
+  the app: no event fired, the packet loop kept reading a descriptor the kernel
+  had already closed, and `getState()` kept answering `connected`.
+* The revocation is reported from `onRevoke()` rather than `onDestroy()`,
+  because `onDestroy` also runs on an ordinary in-app `vpnStop` and would
+  announce a revocation on every normal disconnect. For the same reason it
+  clears the cached state behind `getState()`: unlike a disconnect the app
+  asked for, nothing follows a revocation with a `vpnStop`.
+* Both `flutter_sangfor/service` streams install the single native handler they
+  share, so `revocations` works on its own instead of depending on something
+  having subscribed to `disconnectRequests` first.
+
 ## 0.0.11
 
 * Fix iOS builds by distinguishing manager and data plane errors and converting
