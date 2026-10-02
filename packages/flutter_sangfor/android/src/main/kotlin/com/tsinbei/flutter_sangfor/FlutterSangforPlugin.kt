@@ -31,6 +31,7 @@ class FlutterSangforPlugin :
         val events = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_sangfor/service")
         events.setMethodCallHandler { _, result -> result.notImplemented() }
         serviceEventChannel = events
+        activePlugin = this
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -177,6 +178,7 @@ class FlutterSangforPlugin :
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        activePlugin = null
         serviceEventChannel = null
         channel.setMethodCallHandler(null)
     }
@@ -186,6 +188,12 @@ class FlutterSangforPlugin :
 
         @Volatile
         private var serviceEventChannel: MethodChannel? = null
+
+        /** The attached plugin, so the service's static callbacks can keep
+         * [state] honest. Null while no engine is attached, which is also
+         * when nobody is listening. */
+        @Volatile
+        private var activePlugin: FlutterSangforPlugin? = null
         private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
         /** Invoked by [VpnTunnelService] when the user taps the
@@ -193,6 +201,16 @@ class FlutterSangforPlugin :
         fun requestDisconnect() {
             mainHandler.post {
                 serviceEventChannel?.invokeMethod("disconnectRequested", null)
+            }
+        }
+
+        /** Invoked by [VpnTunnelService.onRevoke] when the system takes the
+         * tunnel away. Unlike a disconnect the app asked for, nothing follows
+         * this with a `vpnStop`, so the cached state is corrected here. */
+        fun notifyRevoked() {
+            mainHandler.post {
+                activePlugin?.state = "disconnected"
+                serviceEventChannel?.invokeMethod("vpnRevoked", null)
             }
         }
     }

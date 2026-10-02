@@ -95,20 +95,45 @@ class AndroidVpnDevice implements SangforPacketDevice {
       MethodChannel('flutter_sangfor/service');
   static final StreamController<void> _disconnectRequests =
       StreamController<void>.broadcast();
+  static final StreamController<void> _revocations =
+      StreamController<void>.broadcast();
   static bool _eventHandlerInstalled = false;
+
+  /// Both event streams arrive on one native channel with one handler, so it
+  /// has to be installed by whichever of them is touched first.
+  static void _installEventHandler() {
+    if (_eventHandlerInstalled) return;
+    _eventHandlerInstalled = true;
+    _eventChannel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'disconnectRequested':
+          _disconnectRequests.add(null);
+        case 'vpnRevoked':
+          _revocations.add(null);
+      }
+      return null;
+    });
+  }
 
   /// Fires when the user taps the notification's disconnect action.
   static Stream<void> get disconnectRequests {
-    if (!_eventHandlerInstalled) {
-      _eventHandlerInstalled = true;
-      _eventChannel.setMethodCallHandler((call) async {
-        if (call.method == 'disconnectRequested') {
-          _disconnectRequests.add(null);
-        }
-        return null;
-      });
-    }
+    _installEventHandler();
     return _disconnectRequests.stream;
+  }
+
+  /// Fires when the system takes the tunnel away without this app asking: the
+  /// user switched the VPN off in system settings or from the quick-settings
+  /// tile, or another `VpnService` took over.
+  ///
+  /// The tunnel is already down by the time this arrives and the descriptor
+  /// handed out by [start] is closed, so anything tracking connection state
+  /// has to reconcile it here or it will keep reporting a tunnel that no
+  /// longer exists. Distinct from [disconnectRequests]: that one is the user
+  /// asking this app to disconnect, this one is the platform reporting that
+  /// the disconnection already happened.
+  static Stream<void> get revocations {
+    _installEventHandler();
+    return _revocations.stream;
   }
 
   /// Requests the system VPN permission. Returns true when the permission

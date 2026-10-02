@@ -93,6 +93,17 @@ class VpnTunnelService : VpnService() {
         return START_STICKY
     }
 
+    override fun onRevoke() {
+        // The system is taking the tunnel away: the user switched the VPN off
+        // in system settings or from the quick-settings tile, or another
+        // VpnService took over. Dart still believes the tunnel is up and its
+        // packet loop is holding a descriptor the kernel has already closed,
+        // so report it here -- onDestroy also runs on a normal in-app
+        // vpnStop, which would make it fire on every ordinary disconnect.
+        FlutterSangforPlugin.notifyRevoked()
+        super.onRevoke()
+    }
+
     override fun onDestroy() {
         stopNotificationGuard()
         activeService = null
