@@ -13,7 +13,7 @@ sangfor-core = { path = "../sangfor-core" }
 # Driver and descriptor access are the only unsafe code in the workspace
 # outside the C ABI, and each is behind a feature that is off by default.
 [target.'cfg(windows)'.dependencies]
-libloading = { version = "0.8", optional = true }
+libloading = { version = "0.9", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, optional = true }
