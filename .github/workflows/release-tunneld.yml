@@ -99,13 +99,6 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
           -p sangfor-tunneld --features ${{ matrix.features }}
 
-      # The workspace release profile is already size-tuned (opt-level="z", lto,
-      # codegen-units=1, panic="abort", strip), so there is nothing to pass here.
-      - name: Build
-        run: >-
-          cargo build --release --target ${{ matrix.target }}
-          -p sangfor-tunneld --features ${{ matrix.features }}
-
       - name: Stage the artifact
         shell: bash
         run: |
