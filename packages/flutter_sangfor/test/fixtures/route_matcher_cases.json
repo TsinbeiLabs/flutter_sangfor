@@ -1,0 +1,509 @@
+{
+ "_comment": "Hand-written expectations for the route matcher. The Dart VpnRouteMatcher (Luotopia-app) and the Swift SangforRouteMatcher (flutter_sangfor) are both driven by this file; the two copies must stay byte-identical.",
+ "routes": [
+  {
+   "host": "*.whu.edu.cn",
+   "protocol": "tcp",
+   "portMin": 1,
+   "portMax": 65535,
+   "appId": "wild",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "lib.example.edu.cn",
+   "protocol": "tcp",
+   "portMin": 443,
+   "portMax": 443,
+   "appId": "lib",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "10.0.0.0/8",
+   "protocol": "tcp",
+   "portMin": 1,
+   "portMax": 65535,
+   "appId": "cidr",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "202.114.0.1~202.114.0.9",
+   "protocol": "all",
+   "portMin": 80,
+   "portMax": 80,
+   "appId": "range",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "192.168.1.5",
+   "protocol": "udp",
+   "portMin": 1,
+   "portMax": 65535,
+   "appId": "udp",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "exact.example.org",
+   "protocol": "tcp",
+   "portMin": 8080,
+   "portMax": 8080,
+   "appId": "exact",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": false
+  },
+  {
+   "host": "oa.school.cn",
+   "protocol": "all",
+   "portMin": 1,
+   "portMax": 65535,
+   "appId": "oa",
+   "nodeGroupId": "g1",
+   "addrPretend": false,
+   "enableTcpPrefL3": true
+  }
+ ],
+ "cases": [
+  {
+   "name": "wildcard matches a subdomain",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "wildcard does not match the apex",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "wildcard matches a deep subdomain",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "x.y.whu.edu.cn",
+   "port": 80,
+   "expect": true
+  },
+  {
+   "name": "host is lower-cased",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "A.WHU.EDU.CN",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "host is trimmed",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": " a.whu.edu.cn ",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "empty host never tunnels",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "unrelated domain",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "example.com",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "suffix without a dot boundary",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "evilwhu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "port inside the resource range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "lib.example.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "port outside the resource range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "lib.example.edu.cn",
+   "port": 80,
+   "expect": false
+  },
+  {
+   "name": "literal domain on its port",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "exact.example.org",
+   "port": 8080,
+   "expect": true
+  },
+  {
+   "name": "literal domain on another port",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "exact.example.org",
+   "port": 80,
+   "expect": false
+  },
+  {
+   "name": "literal domain does not cover subdomains",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "sub.exact.example.org",
+   "port": 8080,
+   "expect": false
+  },
+  {
+   "name": "address inside a CIDR",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "10.1.2.3",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "address at the end of a CIDR",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "10.255.255.255",
+   "port": 22,
+   "expect": true
+  },
+  {
+   "name": "address outside every route",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "11.0.0.1",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "public address",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "8.8.8.8",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "address at the start of a range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "202.114.0.1",
+   "port": 80,
+   "expect": true
+  },
+  {
+   "name": "address inside a range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "202.114.0.5",
+   "port": 80,
+   "expect": true
+  },
+  {
+   "name": "address at the end of a range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "202.114.0.9",
+   "port": 80,
+   "expect": true
+  },
+  {
+   "name": "address past the range",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "202.114.0.10",
+   "port": 80,
+   "expect": false
+  },
+  {
+   "name": "range on another port",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "202.114.0.5",
+   "port": 81,
+   "expect": false
+  },
+  {
+   "name": "udp-only resource does not carry tcp",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "192.168.1.5",
+   "port": 53,
+   "expect": false
+  },
+  {
+   "name": "protocol all with L3 preference still matches",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "oa.school.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "ipv6 literal never tunnels",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "::1",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "ipv6 documentation address never tunnels",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "2001:db8::1",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "out-of-range octets are a name, not an address",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "10.0.0.256",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "address-looking prefix of a real domain",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "10.0.0.1.whu.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "slash suffix is treated as an address and covers nothing",
+   "policy": "followServer",
+   "customEntries": [],
+   "host": "10.0.0.1/8",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom wildcard narrows to a covered subdomain",
+   "policy": "custom",
+   "customEntries": [
+    "*.whu.edu.cn",
+    "whu.edu.cn"
+   ],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "custom lists the apex but the server wildcard does not cover it",
+   "policy": "custom",
+   "customEntries": [
+    "*.whu.edu.cn",
+    "whu.edu.cn"
+   ],
+   "host": "whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom does not cover a server-only resource",
+   "policy": "custom",
+   "customEntries": [
+    "*.whu.edu.cn",
+    "whu.edu.cn"
+   ],
+   "host": "oa.school.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom entry for a server resource",
+   "policy": "custom",
+   "customEntries": [
+    "oa.school.cn"
+   ],
+   "host": "oa.school.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "custom entry cannot widen the server port range",
+   "policy": "custom",
+   "customEntries": [
+    "lib.example.edu.cn"
+   ],
+   "host": "lib.example.edu.cn",
+   "port": 80,
+   "expect": false
+  },
+  {
+   "name": "custom entry on the server port",
+   "policy": "custom",
+   "customEntries": [
+    "lib.example.edu.cn"
+   ],
+   "host": "lib.example.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "custom literal entry matches only that host",
+   "policy": "custom",
+   "customEntries": [
+    "a.whu.edu.cn"
+   ],
+   "host": "b.whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom literal entry matches itself",
+   "policy": "custom",
+   "customEntries": [
+    "a.whu.edu.cn"
+   ],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "empty custom list tunnels nothing",
+   "policy": "custom",
+   "customEntries": [],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "empty custom list tunnels no address either",
+   "policy": "custom",
+   "customEntries": [],
+   "host": "10.1.2.3",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom CIDR covers an address",
+   "policy": "custom",
+   "customEntries": [
+    "10.0.0.0/8"
+   ],
+   "host": "10.1.2.3",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "custom CIDR does not cover names",
+   "policy": "custom",
+   "customEntries": [
+    "10.0.0.0/8"
+   ],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom address entry matches only itself",
+   "policy": "custom",
+   "customEntries": [
+    "10.1.2.3"
+   ],
+   "host": "10.1.2.3",
+   "port": 443,
+   "expect": true
+  },
+  {
+   "name": "custom address entry does not match a neighbour",
+   "policy": "custom",
+   "customEntries": [
+    "10.1.2.3"
+   ],
+   "host": "10.1.2.4",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom range entry covers its end",
+   "policy": "custom",
+   "customEntries": [
+    "202.114.0.1~202.114.0.9"
+   ],
+   "host": "202.114.0.9",
+   "port": 80,
+   "expect": true
+  },
+  {
+   "name": "custom range entry stops at its end",
+   "policy": "custom",
+   "customEntries": [
+    "202.114.0.1~202.114.0.9"
+   ],
+   "host": "202.114.0.10",
+   "port": 80,
+   "expect": false
+  },
+  {
+   "name": "custom domain entries never cover addresses",
+   "policy": "custom",
+   "customEntries": [
+    "*.whu.edu.cn"
+   ],
+   "host": "10.1.2.3",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom bare domain does not cover subdomains",
+   "policy": "custom",
+   "customEntries": [
+    "whu.edu.cn"
+   ],
+   "host": "a.whu.edu.cn",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom entry outside the server list",
+   "policy": "custom",
+   "customEntries": [
+    "*.com"
+   ],
+   "host": "example.com",
+   "port": 443,
+   "expect": false
+  },
+  {
+   "name": "custom policy still rejects ipv6",
+   "policy": "custom",
+   "customEntries": [
+    "*.whu.edu.cn",
+    "whu.edu.cn"
+   ],
+   "host": "::1",
+   "port": 443,
+   "expect": false
+  }
+ ]
+}

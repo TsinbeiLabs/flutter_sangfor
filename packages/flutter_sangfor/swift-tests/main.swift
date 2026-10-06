@@ -1326,6 +1326,289 @@ if let der = Data(base64Encoded: string(["certificateDigest", "derBase64"])) {
   check(false, "the fixture certificate decodes from base64")
 }
 
+// MARK: - Domain routing
+
+/// The shared case table, if the runner was given one. The Dart matcher in the
+/// app reads the same file.
+if arguments.count > 2 {
+  guard
+    let caseData = try? Data(contentsOf: URL(fileURLWithPath: arguments[2])),
+    let caseObject = try? JSONSerialization.jsonObject(with: caseData) as? [String: Any],
+    let routeObjects = caseObject["routes"] as? [[String: Any]],
+    let caseObjects = caseObject["cases"] as? [[String: Any]]
+  else {
+    print("cannot read route matcher cases at \(arguments[2])")
+    exit(2)
+  }
+  let matcherRoutes = routeObjects.map { entry in
+    ATrustRoute(
+      host: entry["host"] as! String,
+      protocolName: entry["protocol"] as! String,
+      portMin: entry["portMin"] as! Int,
+      portMax: entry["portMax"] as! Int,
+      appId: entry["appId"] as! String,
+      nodeGroupId: entry["nodeGroupId"] as! String,
+      addrPretend: entry["addrPretend"] as! Bool,
+      enableTcpPrefL3: entry["enableTcpPrefL3"] as! Bool
+    )
+  }
+  for entry in caseObjects {
+    let matcher = SangforRouteMatcher(
+      policy: SangforRouteMatcher.Policy(rawValue: entry["policy"] as! String)!,
+      customEntries: entry["customEntries"] as! [String],
+      serverRoutes: matcherRoutes
+    )
+    checkEqual(
+      matcher.shouldTunnel(host: entry["host"] as! String, port: entry["port"] as! Int),
+      entry["expect"] as! Bool,
+      "route matcher: \(entry["name"] as! String)"
+    )
+  }
+  check(caseObjects.count >= 40, "the shared case table has real coverage")
+}
+
+do {
+  checkEqual(
+    SangforDnsDomains.derive(["*.whu.edu.cn", "whu.edu.cn", "lib.whu.edu.cn"]),
+    ["whu.edu.cn"],
+    "a suffix covered by a shorter one is dropped"
+  )
+  checkEqual(
+    SangforDnsDomains.derive([".example.org", "A.B.CN", "10.0.0.0/8", "1.2.3.4", "9.9.9.1~9.9.9.9"]),
+    ["a.b.cn", "example.org"],
+    "addresses, CIDRs and ranges are skipped and names are normalized"
+  )
+  checkEqual(
+    SangforDnsDomains.derive(["a*.b.cn", "localhost", "", "  ", "x.y."]),
+    ["x.y"],
+    "inner wildcards and dotless names are dropped, trailing dots trimmed"
+  )
+
+  let routes = [
+    ATrustRoute(
+      host: "*.whu.edu.cn", protocolName: "tcp", portMin: 1, portMax: 65535,
+      appId: "a", nodeGroupId: "g", addrPretend: false, enableTcpPrefL3: false),
+    ATrustRoute(
+      host: "10.0.0.0/8", protocolName: "tcp", portMin: 1, portMax: 65535,
+      appId: "b", nodeGroupId: "g", addrPretend: false, enableTcpPrefL3: false),
+  ]
+  let policy = SangforProxyPolicy(
+    matcher: SangforRouteMatcher(policy: .followServer, customEntries: [], serverRoutes: routes),
+    neverTunnelHosts: ["cas.whu.edu.cn", "vpn.whu.edu.cn"],
+    matchDomains: ["whu.edu.cn"]
+  )
+  checkEqual(policy.decide(host: "a.whu.edu.cn", port: 443), .tunnel, "a covered host tunnels")
+  checkEqual(policy.decide(host: "A.WHU.EDU.CN.", port: 443), .tunnel, "case and a trailing dot are ignored")
+  checkEqual(policy.decide(host: "cas.whu.edu.cn", port: 443), .direct, "a never-tunnel host goes direct")
+  checkEqual(policy.decide(host: "CAS.whu.edu.cn", port: 443), .direct, "the never-tunnel match ignores case")
+  checkEqual(policy.decide(host: "x.cas.whu.edu.cn", port: 443), .tunnel, "never-tunnel is exact, not a suffix")
+  checkEqual(policy.decide(host: "whu.edu.cn", port: 443), .direct, "inside the match domains but not a resource goes direct")
+  checkEqual(policy.decide(host: "example.com", port: 443), .reject, "outside the match domains is refused")
+  checkEqual(policy.decide(host: "evilwhu.edu.cn", port: 443), .reject, "a suffix needs a dot boundary")
+  checkEqual(policy.decide(host: "10.1.2.3", port: 443), .tunnel, "a covered address tunnels")
+  checkEqual(policy.decide(host: "8.8.8.8", port: 443), .reject, "an uncovered address is refused")
+  checkEqual(policy.decide(host: "::1", port: 443), .reject, "ipv6 is refused")
+  checkEqual(policy.decide(host: "", port: 443), .reject, "an empty host is refused")
+
+  let custom = SangforProxyPolicy(
+    matcher: SangforRouteMatcher(policy: .custom, customEntries: ["lib.whu.edu.cn"], serverRoutes: routes),
+    neverTunnelHosts: [],
+    matchDomains: ["whu.edu.cn"]
+  )
+  checkEqual(custom.decide(host: "lib.whu.edu.cn", port: 443), .tunnel,
+    "a custom entry the server wildcard also covers tunnels")
+  checkEqual(custom.decide(host: "other.whu.edu.cn", port: 443), .direct,
+    "a server-covered host the custom list leaves out goes direct, not through the tunnel")
+  let customWide = SangforProxyPolicy(
+    matcher: SangforRouteMatcher(policy: .custom, customEntries: ["*.whu.edu.cn"], serverRoutes: routes),
+    neverTunnelHosts: [],
+    matchDomains: ["whu.edu.cn"]
+  )
+  checkEqual(customWide.decide(host: "lib.whu.edu.cn", port: 443), .tunnel, "custom narrows but keeps covered hosts")
+
+  // Configuration decoding tolerates plans written by older apps.
+  let bare = try JSONDecoder().decode(
+    SangforDomainRoutingConfiguration.self,
+    from: Data("{}".utf8)
+  )
+  checkEqual(bare, SangforDomainRoutingConfiguration(), "missing keys take the defaults")
+  let full = try JSONDecoder().decode(
+    SangforDomainRoutingConfiguration.self,
+    from: Data(
+      """
+      {"policy":"custom","customEntries":["a.cn"],"neverTunnelHosts":["cas.cn"],"proxyEnabled":false}
+      """.utf8)
+  )
+  checkEqual(full.policy, .custom, "the policy decodes")
+  checkEqual(full.customEntries, ["a.cn"], "custom entries decode")
+  checkEqual(full.neverTunnelHosts, ["cas.cn"], "never-tunnel hosts decode")
+  checkEqual(full.proxyEnabled, false, "the proxy switch decodes")
+
+  let planWithRouting = ATrustSessionPlan(
+    sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
+    lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",
+    nodes: ["g": ["203.0.113.9:441"]], majorNodeGroup: "g", routes: routes, dnsServers: [],
+    domainRouting: SangforDomainRoutingConfiguration(policy: .custom, customEntries: ["x.cn"])
+  )
+  let roundTrip = try ATrustSessionPlan.decode(planWithRouting.encoded())
+  checkEqual(roundTrip.domainRouting?.policy, .custom, "the plan carries the routing policy")
+  let planWithout = try ATrustSessionPlan.decode(
+    ATrustSessionPlan(
+      sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
+      lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",
+      nodes: ["g": ["203.0.113.9:441"]], majorNodeGroup: "g", routes: routes, dnsServers: []
+    ).encoded()
+  )
+  check(planWithout.domainRouting == nil, "a plan without the key decodes with no routing")
+}
+
+// MARK: - HTTP proxy parser
+
+do {
+  func feed(_ text: String, credential: String? = nil) -> SangforProxyParseResult {
+    var parser = SangforHttpProxyParser(credential: credential)
+    return parser.feed(Data(text.utf8))
+  }
+
+  if case .request(.connect(let host, let port), let leftover) = feed(
+    "CONNECT Ca.Whu.edu.cn:8443 HTTP/1.1\r\nHost: ca.whu.edu.cn:8443\r\n\r\n")
+  {
+    checkEqual(host, "ca.whu.edu.cn", "CONNECT lower-cases the host")
+    checkEqual(port, 8443, "CONNECT carries the port")
+    check(leftover.isEmpty, "nothing follows a bare CONNECT")
+  } else {
+    check(false, "a CONNECT request parses")
+  }
+  if case .request(.connect(_, let port), _) = feed("CONNECT a.cn HTTP/1.1\r\n\r\n") {
+    checkEqual(port, 443, "CONNECT without a port means 443")
+  } else {
+    check(false, "CONNECT without a port parses")
+  }
+  if case .request(.connect(let host, let port), _) = feed("CONNECT [2001:db8::1]:8443 HTTP/1.1\r\n\r\n") {
+    checkEqual(host, "2001:db8::1", "a bracketed IPv6 authority parses")
+    checkEqual(port, 8443, "and keeps its port")
+  } else {
+    check(false, "a bracketed IPv6 authority parses")
+  }
+  if case .request(.connect, let leftover) = feed("CONNECT a.cn:443 HTTP/1.1\r\n\r\nHELLO") {
+    checkEqual(String(data: leftover, encoding: .utf8), "HELLO", "bytes after the header are returned")
+  } else {
+    check(false, "pipelined bytes after CONNECT are kept")
+  }
+
+  if case .request(.forward(let host, let port, let head, let body), _) = feed(
+    "GET http://Xgbnew.whu.edu.cn/a/b?x=1&y=2 HTTP/1.1\r\nHost: xgbnew.whu.edu.cn\r\n"
+      + "Proxy-Connection: keep-alive\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\nBODY")
+  {
+    checkEqual(host, "xgbnew.whu.edu.cn", "a forwarded request lower-cases the host")
+    checkEqual(port, 80, "http defaults to port 80")
+    let text = String(data: head, encoding: .isoLatin1) ?? ""
+    check(text.hasPrefix("GET /a/b?x=1&y=2 HTTP/1.1\r\n"), "the target is rewritten to origin-form")
+    check(!text.lowercased().contains("proxy-connection"), "Proxy-Connection is dropped")
+    check(!text.contains("keep-alive"), "keep-alive is dropped so one connection serves one request")
+    check(text.contains("Accept: */*\r\n"), "other headers are kept")
+    check(text.hasSuffix("Connection: close\r\n\r\n"), "Connection: close is forced")
+    checkEqual(String(data: body, encoding: .utf8), "BODY", "a body in the same read is passed on")
+  } else {
+    check(false, "an absolute-form request parses")
+  }
+  if case .request(.forward(_, let port, let head, _), _) = feed("GET http://a.cn HTTP/1.1\r\n\r\n") {
+    checkEqual(port, 80, "an empty path is fine")
+    check(String(data: head, encoding: .isoLatin1)?.hasPrefix("GET / HTTP/1.1") ?? false, "an empty path becomes /")
+  } else {
+    check(false, "an absolute-form request without a path parses")
+  }
+
+  // Headers arrive in pieces.
+  var split = SangforHttpProxyParser(credential: nil)
+  checkEqual(split.feed(Data("CONNECT a.cn:4".utf8)), .needMore, "an incomplete line waits")
+  checkEqual(split.feed(Data("43 HTTP/1.1\r\nHost".utf8)), .needMore, "an incomplete header block waits")
+  if case .request(.connect(_, let port), _) = split.feed(Data(": a.cn\r\n\r\n".utf8)) {
+    checkEqual(port, 443, "the request completes across reads")
+  } else {
+    check(false, "a request split across reads parses")
+  }
+
+  checkEqual(feed("GARBAGE\r\n\r\n"), .failure(.badRequest), "a malformed request line is refused")
+  checkEqual(feed("GET /relative HTTP/1.1\r\n\r\n"), .failure(.badRequest), "an origin-form request is not a proxy request")
+  checkEqual(feed("CONNECT :443 HTTP/1.1\r\n\r\n"), .failure(.badRequest), "an empty host is refused")
+  checkEqual(feed("CONNECT a.cn:0 HTTP/1.1\r\n\r\n"), .failure(.badRequest), "port 0 is refused")
+  checkEqual(feed("CONNECT a.cn:99999 HTTP/1.1\r\n\r\n"), .failure(.badRequest), "a port above 65535 is refused")
+  checkEqual(feed("GET ftp://a.cn/ HTTP/1.1\r\n\r\n"), .failure(.badRequest), "other schemes are refused")
+
+  var oversized = SangforHttpProxyParser(credential: nil)
+  checkEqual(
+    oversized.feed(Data(repeating: 0x41, count: SangforHttpProxyParser.maximumHeaderBytes + 1)),
+    .failure(.badRequest),
+    "an oversized header block is refused"
+  )
+
+  let good = "Basic " + Data("luotopia:secret".utf8).base64EncodedString()
+  if case .request(.connect, _) = feed(
+    "CONNECT a.cn:443 HTTP/1.1\r\nProxy-Authorization: \(good)\r\n\r\n", credential: "luotopia:secret")
+  {
+    check(true, "the right credential is accepted")
+  } else {
+    check(false, "the right credential is accepted")
+  }
+  checkEqual(
+    feed("CONNECT a.cn:443 HTTP/1.1\r\n\r\n", credential: "luotopia:secret"),
+    .failure(.proxyAuthenticationRequired),
+    "a missing credential gets a 407"
+  )
+  checkEqual(
+    feed("CONNECT a.cn:443 HTTP/1.1\r\nProxy-Authorization: Basic AAAA\r\n\r\n", credential: "luotopia:secret"),
+    .failure(.proxyAuthenticationRequired),
+    "a wrong credential gets a 407"
+  )
+  check(
+    String(data: SangforHttpProxyResponses.connectionEstablished, encoding: .utf8)
+      == "HTTP/1.1 200 Connection established\r\n\r\n",
+    "the CONNECT response matches the Dart proxy"
+  )
+}
+
+// MARK: - Proxy dial
+
+do {
+  let scheduler = VirtualScheduler()
+  let plan = makePlan(signKey: signKey)
+  var channels: [FakeChannel] = []
+  let plane = SangforNativeDataPlane(
+    plan: plan,
+    scheduler: scheduler,
+    dialer: { _, _, completion in
+      let channel = FakeChannel()
+      channels.append(channel)
+      completion(.success(channel))
+    },
+    log: { _ in }
+  )
+  plane.start { _ in }
+  channels[0].deliver(Data(bytesFromHex(string(["l3", "handshakeResponseHex"]))))
+
+  var dialed: Result<SangforRelayStream, Error>?
+  plane.dialTcpTunnelForProxy(host: "vpn.example.test", port: 443) { dialed = $0 }
+  checkEqual(channels.count, 2, "a proxy dial opens a TCP tunnel connection")
+  let proxyDial = String(decoding: channels[1].sent, as: UTF8.self)
+  check(!proxyDial.contains("destIp"), "a proxy dial claims no resolved address")
+  check(proxyDial.contains("vpn.example.test:443"), "a proxy dial names the host it was asked for")
+  channels[1].deliver(Data(bytesFromHex(string(["tcpTunnel", "serverResponseHex"]))))
+  if case .success? = dialed {
+    check(true, "the proxy dial completes")
+  } else {
+    check(false, "the proxy dial completes")
+  }
+
+  var refused: Result<SangforRelayStream, Error>?
+  plane.dialTcpTunnelForProxy(host: "nowhere.example.test", port: 443) { refused = $0 }
+  if case .failure? = refused {
+    check(true, "a host no resource covers is refused")
+  } else {
+    check(false, "a host no resource covers is refused")
+  }
+}
+
 // MARK: - Summary
 
 if failures > 0 {

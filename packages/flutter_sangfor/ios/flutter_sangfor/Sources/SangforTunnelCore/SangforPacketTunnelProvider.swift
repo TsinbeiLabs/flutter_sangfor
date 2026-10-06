@@ -48,6 +48,17 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   /// Set while the extension runs its own data plane (`.extensionNative`).
   private var nativeRuntime: SangforNativeTunnelRuntime?
 
+  /// The HTTP proxy published to the system while the native data plane runs.
+  private var proxyServer: SangforProxyServer?
+  private var proxyStatsTask: DispatchWorkItem?
+
+  /// What the system needs to know to send traffic to [proxyServer].
+  private struct PreparedProxy {
+    let port: UInt16
+    let matchDomains: [String]
+    let exceptionList: [String]
+  }
+
   // Packets from the system waiting for the Runner to connect.
   private var pendingPackets: [Data] = []
   private var pendingBytes = 0
@@ -112,6 +123,41 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       return
     }
 
+    // The native data plane publishes its own proxy, so it has to be listening
+    // before the settings that name its port are applied.
+    guard configuration.runtimeMode == .extensionNative else {
+      applyTunnelSettings(
+        configuration: configuration,
+        parsedRoutes: parsedRoutes,
+        subnetMask: subnetMask,
+        proxy: nil,
+        startOptions: startOptions,
+        completionHandler: completionHandler
+      )
+      return
+    }
+    prepareDomainProxy(
+      appGroupIdentifier: resolvedAppGroupIdentifier(options: startOptions)
+    ) { [weak self] proxy in
+      self?.applyTunnelSettings(
+        configuration: configuration,
+        parsedRoutes: parsedRoutes,
+        subnetMask: subnetMask,
+        proxy: proxy,
+        startOptions: startOptions,
+        completionHandler: completionHandler
+      )
+    }
+  }
+
+  private func applyTunnelSettings(
+    configuration: SangforTunnelConfiguration,
+    parsedRoutes: [SangforIPv4.Route],
+    subnetMask: String,
+    proxy preparedProxy: PreparedProxy?,
+    startOptions: [String: NSObject],
+    completionHandler: @escaping (Error?) -> Void
+  ) {
     let settings = NEPacketTunnelNetworkSettings(
       tunnelRemoteAddress: configuration.address
     )
@@ -155,6 +201,30 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       settings.proxySettings = proxySettings
       SangforLog.network(
         "system proxy advertised at \(proxy.host):\(proxy.port)"
+      )
+    }
+    if let preparedProxy {
+      // The extension's own proxy: apps that honor the system proxy send their
+      // campus traffic here by host name, so domains the routing table cannot
+      // express (wildcards, names that resolve to other addresses) still reach
+      // the tunnel. Only the matching domains are sent; the user's own
+      // addresses, like the CAS server, are exceptions.
+      let proxySettings = NEProxySettings()
+      // No credential: the system does not attach one on its own, it asks the
+      // user for it instead. The proxy is limited by what it will serve, not
+      // by who asks (see `SangforProxyPolicy`).
+      let server = NEProxyServer(address: "127.0.0.1", port: Int(preparedProxy.port))
+      proxySettings.httpEnabled = true
+      proxySettings.httpServer = server
+      proxySettings.httpsEnabled = true
+      proxySettings.httpsServer = server
+      proxySettings.matchDomains = preparedProxy.matchDomains
+      proxySettings.exceptionList = preparedProxy.exceptionList
+      proxySettings.excludeSimpleHostnames = true
+      settings.proxySettings = proxySettings
+      SangforLog.network(
+        "extension proxy at 127.0.0.1:\(preparedProxy.port) for "
+          + "\(preparedProxy.matchDomains.count) domain suffix(es)"
       )
     }
     if let mtu = configuration.mtu, mtu > 0 {
@@ -250,6 +320,10 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     listener = nil
     bridge?.close()
     bridge = nil
+    proxyStatsTask?.cancel()
+    proxyStatsTask = nil
+    proxyServer?.stop()
+    proxyServer = nil
     nativeRuntime?.stop()
     nativeRuntime = nil
     // The plan carries the tunnel signing key. Wipe it when the tunnel is
@@ -309,6 +383,17 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         "reconnects": native.reconnects,
       ]
     }
+    if let proxy = queue.sync(execute: { proxyServer?.statistics }) {
+      payload["proxy"] = [
+        "sessions": proxy.sessions,
+        "tunneled": proxy.tunneled,
+        "direct": proxy.direct,
+        "rejected": proxy.rejected,
+        "failures": proxy.failures,
+        "upBytes": proxy.upBytes,
+        "downBytes": proxy.downBytes,
+      ]
+    }
     completionHandler?(
       try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     )
@@ -316,6 +401,102 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
 
   private struct ProviderMessage: Codable {
     var action: String
+  }
+
+  // MARK: - Domain proxy
+
+  /// Reads the plan, decides whether a proxy is worth running and starts it.
+  /// Anything that stops it from being useful (no plan, proxy switched off, no
+  /// domain resources, listener failure) yields nil, and the tunnel carries on
+  /// without it: the IP routes still work.
+  private func prepareDomainProxy(
+    appGroupIdentifier: String?,
+    completion: @escaping (PreparedProxy?) -> Void
+  ) {
+    guard
+      let data = SangforSharedContainer.readSessionPlan(
+        appGroupIdentifier: appGroupIdentifier
+      ),
+      let plan = try? ATrustSessionPlan.decode(data)
+    else {
+      completion(nil)
+      return
+    }
+    // Opt-in: a plan without the key (any consumer that predates it) gets no
+    // proxy, so adding the feature changes nothing for them.
+    guard let routing = plan.domainRouting, routing.proxyEnabled else {
+      SangforLog.network("extension proxy off: not requested by the plan")
+      completion(nil)
+      return
+    }
+    let candidates = routing.policy == .custom
+      ? routing.customEntries
+      : plan.routes.map(\.host)
+    let domains = SangforDnsDomains.derive(candidates)
+    guard !domains.isEmpty else {
+      SangforLog.network("extension proxy skipped: no domain resources")
+      completion(nil)
+      return
+    }
+    let policy = SangforProxyPolicy(
+      matcher: SangforRouteMatcher(
+        policy: routing.policy,
+        customEntries: routing.customEntries,
+        serverRoutes: plan.routes
+      ),
+      neverTunnelHosts: routing.neverTunnelHosts,
+      matchDomains: domains
+    )
+    let server = SangforProxyServer(
+      policy: policy,
+      credential: nil,
+      queue: queue,
+      tunnelDialer: { [weak self] host, port, done in
+        guard let runtime = self?.nativeRuntime else {
+          done(.failure(SangforTunnelError.channelClosed("the tunnel is not running")))
+          return
+        }
+        runtime.dialTcpTunnelForProxy(host: host, port: port, completion: done)
+      },
+      log: { SangforLog.network($0) }
+    )
+    server.start { [weak self] result in
+      switch result {
+      case .success(let port):
+        self?.proxyServer = server
+        self?.scheduleProxyStatsLogging()
+        completion(
+          PreparedProxy(
+            port: port,
+            matchDomains: domains,
+            exceptionList: routing.neverTunnelHosts
+          )
+        )
+      case .failure(let error):
+        SangforLog.network(
+          "extension proxy failed to start: \(error.localizedDescription)"
+        )
+        server.stop()
+        completion(nil)
+      }
+    }
+  }
+
+  /// Logs the proxy's counters every 30 s so a run can be judged from the
+  /// device log alone.
+  private func scheduleProxyStatsLogging() {
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, let proxy = self.proxyServer else { return }
+      let stats = proxy.statistics
+      SangforLog.network(
+        "proxy: sessions=\(stats.sessions) tunneled=\(stats.tunneled) "
+          + "direct=\(stats.direct) rejected=\(stats.rejected) "
+          + "failures=\(stats.failures) up=\(stats.upBytes) down=\(stats.downBytes)"
+      )
+      self.scheduleProxyStatsLogging()
+    }
+    proxyStatsTask = work
+    queue.asyncAfter(deadline: .now() + 30, execute: work)
   }
 
   // MARK: - Configuration

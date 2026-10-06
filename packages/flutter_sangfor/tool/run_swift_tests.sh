@@ -25,4 +25,9 @@ while IFS= read -r file; do sources+=("$file"); done < <(
 
 echo "compiling ${#sources[@]} native sources + swift-tests/main.swift"
 "$swiftc" -O -o "$out" "${sources[@]}" swift-tests/main.swift
-"$out" "$fixtures"
+matcher_cases="test/fixtures/route_matcher_cases.json"
+if [[ ! -f "$matcher_cases" ]]; then
+  echo "missing $matcher_cases" >&2
+  exit 2
+fi
+"$out" "$fixtures" "$matcher_cases"

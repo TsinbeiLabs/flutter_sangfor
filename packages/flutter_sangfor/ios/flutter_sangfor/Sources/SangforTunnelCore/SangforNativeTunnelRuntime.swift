@@ -123,6 +123,20 @@ public final class SangforNativeTunnelRuntime {
     plane = nil
   }
 
+  /// Opens one TCP tunnel connection for the extension's HTTP proxy. Must be
+  /// called on the runtime's queue.
+  public func dialTcpTunnelForProxy(
+    host: String,
+    port: Int,
+    completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+  ) {
+    guard let plane, !stopped else {
+      completion(.failure(SangforTunnelError.channelClosed("the tunnel is not running")))
+      return
+    }
+    plane.dialTcpTunnelForProxy(host: host, port: port, completion: completion)
+  }
+
   /// The counters the provider reports through `handleAppMessage`.
   public var statistics: SangforNativeDataPlane.Statistics? { plane?.statistics }
 

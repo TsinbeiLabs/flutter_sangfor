@@ -291,10 +291,24 @@ public final class SangforNativeDataPlane {
     }
   }
 
+  /// Dials one TCP tunnel connection for the extension's HTTP proxy.
+  ///
+  /// The proxy hands over the host name the client asked for, so no address was
+  /// resolved and none is claimed: the gateway resolves the name itself, as it
+  /// does for the Dart in-app proxy (`dialTcp` without `resolvedIp`).
+  public func dialTcpTunnelForProxy(
+    host: String,
+    port: Int,
+    completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+  ) {
+    dialTcpTunnel(host: host, port: port, claimsResolvedAddress: false, completion: completion)
+  }
+
   /// Dials one TCP tunnel connection for the terminator.
   private func dialTcpTunnel(
     host: String,
     port: Int,
+    claimsResolvedAddress: Bool = true,
     completion: @escaping (Result<SangforRelayStream, Error>) -> Void
   ) {
     guard let signKey = plan.signKey else {
@@ -334,7 +348,7 @@ public final class SangforNativeDataPlane {
       lang: plan.lang,
       destAddr: destination,
       // Pretending the address means the gateway resolves the name itself.
-      destIp: route.addrPretend ? nil : host,
+      destIp: (route.addrPretend || !claimsResolvedAddress) ? nil : host,
       process: plan.process
     )
     dialer(endpoint.host, endpoint.port) { [weak self] result in

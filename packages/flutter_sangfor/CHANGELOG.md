@@ -1,3 +1,19 @@
+## Unreleased
+
+* iOS packet tunnel extension: an in-extension HTTP proxy, published to the
+  system with `NEProxySettings`, so apps that honor the system proxy reach the
+  gateway's resources by host name -- wildcard and domain-published ones the
+  routing table cannot express -- while the tunnel keeps running after iOS
+  suspends the app. It is opt-in: the session plan's new `domainRouting` key
+  carries the route policy (`followServer` / `custom`), the custom entries and
+  the hosts that must stay direct; a plan without the key gets no proxy.
+* `SangforRouteMatcher` ports the app's `VpnRouteMatcher` (the Android loopback
+  proxy's rule) to Swift, driven by the same `route_matcher_cases.json` as the
+  Dart tests. `SangforProxyPolicy` and `SangforHttpProxyParser` are pure and
+  covered by `tool/run_swift_tests.sh`.
+* The proxy dials the TCP tunnel without claiming a resolved address, as the
+  Dart in-app proxy does.
+
 ## 0.0.12
 
 * `VpnTunnelService` overrides `onRevoke()` and reports it to Dart as
