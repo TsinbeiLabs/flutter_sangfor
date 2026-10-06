@@ -31,3 +31,11 @@ if [[ ! -f "$matcher_cases" ]]; then
   exit 2
 fi
 "$out" "$fixtures" "$matcher_cases"
+
+# The direct stream is a Network.framework connection, so it has its own binary:
+# it needs a real loopback listener and is not part of the portable sources.
+direct_out="${TMPDIR:-/tmp}/sangfor_direct_stream_tests"
+"$swiftc" -O -o "$direct_out" "${sources[@]}" \
+  ios/flutter_sangfor/Sources/SangforTunnelCore/SangforDirectStream.swift \
+  swift-tests/direct-stream/main.swift
+"$direct_out"

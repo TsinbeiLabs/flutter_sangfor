@@ -61,23 +61,28 @@ public final class SangforDirectStream: SangforRelayStream {
       completion(.failure(SangforTunnelError.channelClosed("direct connect timed out")))
     }
     queue.asyncAfter(deadline: .now() + timeout, execute: timeoutWork)
-    connection.stateUpdateHandler = { [weak stream] state in
+    // The handler holds the stream, not the other way round: nothing else owns
+    // it until the completion hands it over, and a weak reference here is gone
+    // by the time the connection is ready -- the dial would then never complete.
+    // The cycle through the connection ends when the stream is closed or fails,
+    // which clear the handler.
+    connection.stateUpdateHandler = { state in
       switch state {
       case .ready:
         guard !settled else { return }
         settled = true
         timeoutWork.cancel()
-        stream?.startReceiving()
-        if let stream { completion(.success(stream)) }
+        stream.startReceiving()
+        completion(.success(stream))
       case .failed(let error):
-        stream?.handleFailure(error)
+        stream.handleFailure(error)
         if !settled {
           settled = true
           timeoutWork.cancel()
           completion(.failure(error))
         }
       case .cancelled:
-        stream?.handleFailure(nil)
+        stream.handleFailure(nil)
         if !settled {
           settled = true
           timeoutWork.cancel()
