@@ -45,6 +45,9 @@ public struct ATrustSessionPlan: Codable, Equatable {
   /// How destinations are decided for the extension's proxy. The app adds this
   /// key to the document it writes; plans without it decode as nil.
   public let domainRouting: SangforDomainRoutingConfiguration?
+  /// The network settings the app computed, for starts that arrive without
+  /// start options.
+  public let tunnelSettings: SangforPlanTunnelSettings?
 
   public init(
     schemaVersion: Int = ATrustSessionPlan.currentSchemaVersion,
@@ -67,7 +70,8 @@ public struct ATrustSessionPlan: Codable, Equatable {
     dialHosts: [String: String] = [:],
     heartbeatSeconds: Double = 5,
     mtu: Int = 1400,
-    domainRouting: SangforDomainRoutingConfiguration? = nil
+    domainRouting: SangforDomainRoutingConfiguration? = nil,
+    tunnelSettings: SangforPlanTunnelSettings? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.sid = sid
@@ -90,6 +94,7 @@ public struct ATrustSessionPlan: Codable, Equatable {
     self.heartbeatSeconds = heartbeatSeconds
     self.mtu = mtu
     self.domainRouting = domainRouting
+    self.tunnelSettings = tunnelSettings
   }
 
   /// The request signing key, or nil when it is not valid base64.

@@ -48,6 +48,11 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   /// Set while the extension runs its own data plane (`.extensionNative`).
   private var nativeRuntime: SangforNativeTunnelRuntime?
 
+  /// Rebuilds the tunnel settings for a given interface address, so they can be
+  /// re-applied when the gateway assigns a different one than was configured.
+  private var settingsFactory: ((String) -> NEPacketTunnelNetworkSettings)?
+  private var appliedAddress: String?
+
   /// The HTTP proxy published to the system while the native data plane runs.
   private var proxyServer: SangforProxyServer?
   private var proxyStatsTask: DispatchWorkItem?
@@ -88,7 +93,63 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     completionHandler: @escaping (Error?) -> Void
   ) {
     let startOptions = options ?? [:]
-    let configuration = Self.configuration(from: startOptions)
+    let sessionPlan = Self.readSessionPlan(
+      appGroupIdentifier: resolvedAppGroupIdentifier(options: startOptions)
+    )
+    var resolved = Self.configuration(from: startOptions)
+    // An app-initiated start always carries a `runtimeMode` key (empty when the
+    // app does not choose); a start the system initiates -- the VPN switched on
+    // from Settings, or iOS bringing the provider back after a network change
+    // or a reboot -- carries no options at all. That start used to fall back to
+    // the loopback bridge with a placeholder address and no routes: a tunnel
+    // that reported connected and carried nothing. It now rebuilds its settings
+    // from the plan, or fails with a reason.
+    if startOptions["runtimeMode"] == nil {
+      guard
+        let plan = sessionPlan,
+        let hint = plan.tunnelSettings,
+        let address = hint.address ?? plan.virtualAddress
+      else {
+        SangforLog.providerError(
+          "started without options and with no tunnel settings in the session plan"
+        )
+        completionHandler(
+          NSError(
+            domain: Self.errorDomain,
+            code: Self.SettingsError.noConfiguration.rawValue,
+            userInfo: [
+              NSLocalizedDescriptionKey:
+                "The VPN was started by the system and no session is stored. Open the app and connect again."
+            ]
+          )
+        )
+        return
+      }
+      resolved = SangforTunnelConfiguration(
+        address: address,
+        prefixLength: hint.prefixLength,
+        routes: hint.routes,
+        dnsServers: hint.dnsServers,
+        searchDomains: hint.searchDomains,
+        mtu: hint.mtu ?? plan.mtu,
+        runtimeMode: .extensionNative
+      )
+      SangforLog.provider("system-initiated start: settings rebuilt from the session plan")
+    }
+    let configuration = resolved
+    guard SangforIPv4.isValidIPv4Address(configuration.address) else {
+      completionHandler(
+        NSError(
+          domain: Self.errorDomain,
+          code: Self.SettingsError.invalidAddress.rawValue,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Invalid tunnel address \(configuration.address)."
+          ]
+        )
+      )
+      return
+    }
     SangforLog.provider(
       "startTunnel: address=\(configuration.address)/\(configuration.prefixLength) routes=\(configuration.routes.count) dns=\(configuration.dnsServers.count) mtu=\(configuration.mtu ?? 0) proxy=\(configuration.proxyEndpoint.map { "\($0.host):\($0.port)" } ?? "none")"
     )
@@ -130,19 +191,19 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         configuration: configuration,
         parsedRoutes: parsedRoutes,
         subnetMask: subnetMask,
+        plan: sessionPlan,
         proxy: nil,
         startOptions: startOptions,
         completionHandler: completionHandler
       )
       return
     }
-    prepareDomainProxy(
-      appGroupIdentifier: resolvedAppGroupIdentifier(options: startOptions)
-    ) { [weak self] proxy in
+    prepareDomainProxy(plan: sessionPlan) { [weak self] proxy in
       self?.applyTunnelSettings(
         configuration: configuration,
         parsedRoutes: parsedRoutes,
         subnetMask: subnetMask,
+        plan: sessionPlan,
         proxy: proxy,
         startOptions: startOptions,
         completionHandler: completionHandler
@@ -154,86 +215,119 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     configuration: SangforTunnelConfiguration,
     parsedRoutes: [SangforIPv4.Route],
     subnetMask: String,
+    plan: ATrustSessionPlan?,
     proxy preparedProxy: PreparedProxy?,
     startOptions: [String: NSObject],
     completionHandler: @escaping (Error?) -> Void
   ) {
-    let settings = NEPacketTunnelNetworkSettings(
-      tunnelRemoteAddress: configuration.address
-    )
-    let ipv4 = NEIPv4Settings(
-      addresses: [configuration.address],
-      subnetMasks: [subnetMask]
-    )
-    ipv4.includedRoutes = parsedRoutes.map { route in
-      NEIPv4Route(
-        destinationAddress: route.destinationAddress,
-        subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
+    // Never-tunnel destinations (the CAS server, the VPN gateway) and the
+    // gateway's own nodes stay out of the tunnel whatever the routes cover; the
+    // tunnel's transport must not be routed back into itself.
+    var excluded: [SangforIPv4.Route] = []
+    if configuration.runtimeMode == .extensionNative {
+      excluded = SangforIPv4.parseRoutes(plan?.tunnelSettings?.excludedRoutes ?? [])
+      for endpoints in (plan?.nodes ?? [:]).values {
+        for endpoint in endpoints {
+          if let node = ATrustNodeEndpoint(endpoint),
+            SangforIPv4.isValidIPv4Address(node.host)
+          {
+            excluded.append(
+              SangforIPv4.Route(destinationAddress: node.host, prefixLength: 32)
+            )
+          }
+        }
+      }
+    }
+    let excludedRoutes = excluded
+    let makeSettings: (String) -> NEPacketTunnelNetworkSettings = { address in
+      let settings = NEPacketTunnelNetworkSettings(
+        tunnelRemoteAddress: address
       )
-    }
-    settings.ipv4Settings = ipv4
-    if !configuration.dnsServers.isEmpty {
-      let dns = NEDNSSettings(servers: configuration.dnsServers)
-      dns.searchDomains = configuration.searchDomains.isEmpty
-        ? nil
-        : configuration.searchDomains
-      settings.dnsSettings = dns
-    }
-    if configuration.runtimeMode == .loopbackBridge,
-      let proxy = configuration.proxyEndpoint
-    {
-      // Advertise the caller's loopback HTTP proxy as the system proxy for
-      // the tunnel's lifetime. Gateways commonly publish resources as
-      // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
-      // clients (CFNetwork/NSURLSession) then reach them through the caller's
-      // proxy instead of being dropped as unrouted. An empty match-domain
-      // matches every host name, so all HTTP(S) traffic is proxied.
-      //
-      // The native data plane terminates those flows itself, so it must not
-      // advertise a proxy that only exists while the Runner is awake.
-      let proxySettings = NEProxySettings()
-      let server = NEProxyServer(address: proxy.host, port: proxy.port)
-      proxySettings.httpEnabled = true
-      proxySettings.httpServer = server
-      proxySettings.httpsEnabled = true
-      proxySettings.httpsServer = server
-      proxySettings.matchDomains = [""]
-      settings.proxySettings = proxySettings
-      SangforLog.network(
-        "system proxy advertised at \(proxy.host):\(proxy.port)"
+      let ipv4 = NEIPv4Settings(
+        addresses: [address],
+        subnetMasks: [subnetMask]
       )
+      ipv4.includedRoutes = parsedRoutes.map { route in
+        NEIPv4Route(
+          destinationAddress: route.destinationAddress,
+          subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
+        )
+      }
+      if !excludedRoutes.isEmpty {
+        ipv4.excludedRoutes = excludedRoutes.map { route in
+          NEIPv4Route(
+            destinationAddress: route.destinationAddress,
+            subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
+          )
+        }
+      }
+      settings.ipv4Settings = ipv4
+      if !configuration.dnsServers.isEmpty {
+        let dns = NEDNSSettings(servers: configuration.dnsServers)
+        dns.searchDomains = configuration.searchDomains.isEmpty
+          ? nil
+          : configuration.searchDomains
+        settings.dnsSettings = dns
+      }
+      if configuration.runtimeMode == .loopbackBridge,
+        let proxy = configuration.proxyEndpoint
+      {
+        // Advertise the caller's loopback HTTP proxy as the system proxy for
+        // the tunnel's lifetime. Gateways commonly publish resources as
+        // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
+        // clients (CFNetwork/NSURLSession) then reach them through the caller's
+        // proxy instead of being dropped as unrouted. An empty match-domain
+        // matches every host name, so all HTTP(S) traffic is proxied.
+        //
+        // The native data plane terminates those flows itself, so it must not
+        // advertise a proxy that only exists while the Runner is awake.
+        let proxySettings = NEProxySettings()
+        let server = NEProxyServer(address: proxy.host, port: proxy.port)
+        proxySettings.httpEnabled = true
+        proxySettings.httpServer = server
+        proxySettings.httpsEnabled = true
+        proxySettings.httpsServer = server
+        proxySettings.matchDomains = [""]
+        settings.proxySettings = proxySettings
+        SangforLog.network(
+          "system proxy advertised at \(proxy.host):\(proxy.port)"
+        )
+      }
+      if let preparedProxy {
+        // The extension's own proxy: apps that honor the system proxy send their
+        // campus traffic here by host name, so domains the routing table cannot
+        // express (wildcards, names that resolve to other addresses) still reach
+        // the tunnel. Only the matching domains are sent; the user's own
+        // addresses, like the CAS server, are exceptions.
+        let proxySettings = NEProxySettings()
+        // No credential: the system does not attach one on its own, it asks the
+        // user for it instead. The proxy is limited by what it will serve, not
+        // by who asks (see `SangforProxyPolicy`).
+        let server = NEProxyServer(address: "127.0.0.1", port: Int(preparedProxy.port))
+        proxySettings.httpEnabled = true
+        proxySettings.httpServer = server
+        proxySettings.httpsEnabled = true
+        proxySettings.httpsServer = server
+        proxySettings.matchDomains = preparedProxy.matchDomains
+        proxySettings.exceptionList = preparedProxy.exceptionList
+        proxySettings.excludeSimpleHostnames = true
+        settings.proxySettings = proxySettings
+        SangforLog.network(
+          "extension proxy at 127.0.0.1:\(preparedProxy.port) for "
+            + "\(preparedProxy.matchDomains.count) domain suffix(es)"
+        )
+      }
+      if let mtu = configuration.mtu, mtu > 0 {
+        settings.mtu = mtu as NSNumber
+      }
+      // IPv4-only MVP: a documented limitation. IPv6 packets are dropped
+      // with a counter instead of being mislabeled as IPv4.
+      return settings
     }
-    if let preparedProxy {
-      // The extension's own proxy: apps that honor the system proxy send their
-      // campus traffic here by host name, so domains the routing table cannot
-      // express (wildcards, names that resolve to other addresses) still reach
-      // the tunnel. Only the matching domains are sent; the user's own
-      // addresses, like the CAS server, are exceptions.
-      let proxySettings = NEProxySettings()
-      // No credential: the system does not attach one on its own, it asks the
-      // user for it instead. The proxy is limited by what it will serve, not
-      // by who asks (see `SangforProxyPolicy`).
-      let server = NEProxyServer(address: "127.0.0.1", port: Int(preparedProxy.port))
-      proxySettings.httpEnabled = true
-      proxySettings.httpServer = server
-      proxySettings.httpsEnabled = true
-      proxySettings.httpsServer = server
-      proxySettings.matchDomains = preparedProxy.matchDomains
-      proxySettings.exceptionList = preparedProxy.exceptionList
-      proxySettings.excludeSimpleHostnames = true
-      settings.proxySettings = proxySettings
-      SangforLog.network(
-        "extension proxy at 127.0.0.1:\(preparedProxy.port) for "
-          + "\(preparedProxy.matchDomains.count) domain suffix(es)"
-      )
-    }
-    if let mtu = configuration.mtu, mtu > 0 {
-      settings.mtu = mtu as NSNumber
-    }
-    // IPv4-only MVP: a documented limitation. IPv6 packets are dropped
-    // with a counter instead of being mislabeled as IPv4.
+    settingsFactory = makeSettings
+    appliedAddress = configuration.address
 
-    setTunnelNetworkSettings(settings) { [weak self] error in
+    setTunnelNetworkSettings(makeSettings(configuration.address)) { [weak self] error in
       if let error {
         SangforLog.network(
           "applying tunnel settings failed: \(error.localizedDescription)"
@@ -276,6 +370,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       log: { SangforLog.network($0) }
     )
     nativeRuntime = runtime
+    runtime.onVirtualAddressChange = { [weak self] addresses in
+      self?.reapplyAddress(addresses)
+    }
     runtime.start { [weak self] result in
       guard let self else {
         completionHandler(nil)
@@ -286,9 +383,42 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         SangforLog.providerError("native data plane failed: \(error)")
         self.nativeRuntime = nil
         completionHandler(error)
-      case .success:
-        completionHandler(nil)
+      case .success(let addresses):
+        // The interface was configured with the address the app queried from
+        // the gateway; the handshake is the authority. A reply addressed to
+        // anything else is dropped by the kernel.
+        self.reapplyAddress(addresses, completion: completionHandler)
       }
+    }
+  }
+
+  /// Re-applies the tunnel settings when the gateway assigned an address other
+  /// than the one the interface was configured with.
+  private func reapplyAddress(
+    _ addresses: [String],
+    completion: ((Error?) -> Void)? = nil
+  ) {
+    guard
+      let address = addresses.first,
+      SangforIPv4.isValidIPv4Address(address),
+      address != appliedAddress,
+      let factory = settingsFactory
+    else {
+      completion?(nil)
+      return
+    }
+    SangforLog.network(
+      "the gateway assigned \(address) but the interface has "
+        + "\(appliedAddress ?? "none"); re-applying the tunnel settings"
+    )
+    appliedAddress = address
+    setTunnelNetworkSettings(factory(address)) { error in
+      if let error {
+        SangforLog.providerError(
+          "re-applying the tunnel settings failed: \(error.localizedDescription)"
+        )
+      }
+      completion?(error)
     }
   }
 
@@ -320,6 +450,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     listener = nil
     bridge?.close()
     bridge = nil
+    settingsFactory = nil
+    appliedAddress = nil
     proxyStatsTask?.cancel()
     proxyStatsTask = nil
     proxyServer?.stop()
@@ -345,6 +477,7 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   public enum SettingsError: Int {
     case invalidPrefixLength = 1
     case invalidAddress = 2
+    case noConfiguration = 200
   }
 
   /// Answers control messages from the Runner (via
@@ -403,6 +536,15 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     var action: String
   }
 
+  private static func readSessionPlan(appGroupIdentifier: String?) -> ATrustSessionPlan? {
+    guard
+      let data = SangforSharedContainer.readSessionPlan(
+        appGroupIdentifier: appGroupIdentifier
+      )
+    else { return nil }
+    return try? ATrustSessionPlan.decode(data)
+  }
+
   // MARK: - Domain proxy
 
   /// Reads the plan, decides whether a proxy is worth running and starts it.
@@ -410,15 +552,10 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   /// domain resources, listener failure) yields nil, and the tunnel carries on
   /// without it: the IP routes still work.
   private func prepareDomainProxy(
-    appGroupIdentifier: String?,
+    plan: ATrustSessionPlan?,
     completion: @escaping (PreparedProxy?) -> Void
   ) {
-    guard
-      let data = SangforSharedContainer.readSessionPlan(
-        appGroupIdentifier: appGroupIdentifier
-      ),
-      let plan = try? ATrustSessionPlan.decode(data)
-    else {
+    guard let plan else {
       completion(nil)
       return
     }

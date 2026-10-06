@@ -13,6 +13,19 @@
   covered by `tool/run_swift_tests.sh`.
 * The proxy dials the TCP tunnel without claiming a resolved address, as the
   Dart in-app proxy does.
+* A start the system initiates (Settings, Control Center, iOS restarting the
+  provider after a network change) used to fall back to the loopback bridge
+  with a placeholder address and no routes: a tunnel that reported connected and
+  carried nothing. The extension now rebuilds its settings from the session
+  plan's new `tunnelSettings` key, or fails with error 200 and a reason.
+* The plan's `tunnelSettings.excludedRoutes` are applied as
+  `NEIPv4Settings.excludedRoutes`, together with the gateway nodes' addresses,
+  so the CAS server and the tunnel's own transport can never enter the tunnel.
+* When the gateway assigns an interface address other than the one the tunnel
+  was configured with, the extension re-applies its settings with the assigned
+  one instead of leaving replies addressed to a stranger.
+* The extension logs how node certificates are checked (pinned, or not verified
+  because the gateway advertised no pins).
 
 ## 0.0.12
 

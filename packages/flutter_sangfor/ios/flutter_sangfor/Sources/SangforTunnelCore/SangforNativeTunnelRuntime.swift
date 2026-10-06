@@ -15,6 +15,10 @@ public final class SangforNativeTunnelRuntime {
   private let queue: DispatchQueue
   private let log: (String) -> Void
 
+  /// Called when the gateway assigns a different virtual address than the one
+  /// the interface was configured with. Runs on the runtime's queue.
+  public var onVirtualAddressChange: (([String]) -> Void)?
+
   private var plane: SangforNativeDataPlane?
   private var readLoopRunning = false
   private var statsTask: DispatchWorkItem?
@@ -64,6 +68,15 @@ public final class SangforNativeTunnelRuntime {
       )
       return
     }
+    // Without pins the node certificate is accepted as presented, as the Dart
+    // data plane does; say so, because the tunnel looks identical either way.
+    log(
+      plan.certificateDigests.isEmpty
+        ? (plan.acceptAnyCertificate
+          ? "node certificates: not verified (the gateway advertised no pins)"
+          : "node certificates: refused (no pins and acceptAnyCertificate is off)")
+        : "node certificates: pinned to \(plan.certificateDigests.count) digest(s)"
+    )
     let scheduler = SangforDispatchScheduler(queue: queue)
     let plane = SangforNativeDataPlane(
       plan: plan,
@@ -95,6 +108,7 @@ public final class SangforNativeTunnelRuntime {
     }
     plane.onVirtualIP = { [weak self] addresses in
       self?.log("virtual IP updated: \(addresses.joined(separator: ","))")
+      self?.onVirtualAddressChange?(addresses)
     }
     self.plane = plane
 

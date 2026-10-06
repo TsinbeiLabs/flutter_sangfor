@@ -1,3 +1,11 @@
+## Unreleased
+
+* Gateways publish address ranges as `a.b.c.d-e.f.g.h`, but every matcher here
+  (and the Swift and Rust data planes built from the same plan) reads
+  `min~max`, so those ranges matched nothing and never reached the OS route
+  table. `ATrustResourceParser` now normalizes them to `min~max` through the new
+  `atrustNormalizeRouteHost`; host names containing `-` are untouched.
+
 ## 0.0.12
 
 * Depend on flutter_sangfor 0.0.12, which reports Android VPN revocations.

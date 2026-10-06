@@ -1462,6 +1462,49 @@ do {
   check(planWithout.domainRouting == nil, "a plan without the key decodes with no routing")
 }
 
+// MARK: - Tunnel settings carried in the plan
+
+do {
+  let bare = try JSONDecoder().decode(SangforPlanTunnelSettings.self, from: Data("{}".utf8))
+  checkEqual(bare, SangforPlanTunnelSettings(), "missing keys take the defaults")
+  checkEqual(bare.prefixLength, 32, "the default prefix is a single host")
+  check(bare.address == nil, "no address means the plan's own virtual address")
+
+  let full = try JSONDecoder().decode(
+    SangforPlanTunnelSettings.self,
+    from: Data(
+      """
+      {"address":"10.130.1.2","prefixLength":32,"routes":["10.0.0.0/8"],
+       "excludedRoutes":["210.42.1.1/32"],"dnsServers":["1.2.3.4"],
+       "searchDomains":["whu.edu.cn"],"mtu":1400}
+      """.utf8)
+  )
+  checkEqual(full.address, "10.130.1.2", "the address decodes")
+  checkEqual(full.routes, ["10.0.0.0/8"], "the routes decode")
+  checkEqual(full.excludedRoutes, ["210.42.1.1/32"], "the excluded routes decode")
+  checkEqual(full.dnsServers, ["1.2.3.4"], "the DNS servers decode")
+  checkEqual(full.searchDomains, ["whu.edu.cn"], "the search domains decode")
+  checkEqual(full.mtu, 1400, "the MTU decodes")
+
+  let withSettings = ATrustSessionPlan(
+    sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
+    lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",
+    nodes: ["g": ["203.0.113.9:441"]], majorNodeGroup: "g", routes: [], dnsServers: [],
+    virtualAddress: "10.130.1.2",
+    tunnelSettings: full
+  )
+  let decoded = try ATrustSessionPlan.decode(withSettings.encoded())
+  checkEqual(decoded.tunnelSettings, full, "the plan carries the tunnel settings")
+  let without = try ATrustSessionPlan.decode(
+    ATrustSessionPlan(
+      sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
+      lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",
+      nodes: ["g": ["203.0.113.9:441"]], majorNodeGroup: "g", routes: [], dnsServers: []
+    ).encoded()
+  )
+  check(without.tunnelSettings == nil, "a plan without the key decodes with none")
+}
+
 // MARK: - HTTP proxy parser
 
 do {

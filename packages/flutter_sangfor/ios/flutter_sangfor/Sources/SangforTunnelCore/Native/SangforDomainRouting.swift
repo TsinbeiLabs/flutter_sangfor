@@ -235,3 +235,60 @@ public struct SangforProxyPolicy {
     SangforAddressBytes.ipv4(host) != nil
   }
 }
+
+/// The tunnel's network settings as the app computed them, carried in the
+/// session plan (`tunnelSettings`).
+///
+/// An app-initiated start gets these through the start options. A start the
+/// system initiates -- the VPN switched on from Settings or Control Center, or
+/// iOS bringing the provider back after a network change or a reboot -- has no
+/// options at all, and without this the extension would have nothing to apply.
+/// The plan outlives a transient stop, so the extension can rebuild its
+/// settings from it on its own.
+public struct SangforPlanTunnelSettings: Codable, Equatable {
+  /// The interface address; nil means the plan's own `virtualAddress`.
+  public var address: String?
+  public var prefixLength: Int
+  public var routes: [String]
+  /// Destinations that must never enter the tunnel (the CAS server, the VPN
+  /// gateway). They win over `routes`.
+  public var excludedRoutes: [String]
+  public var dnsServers: [String]
+  public var searchDomains: [String]
+  public var mtu: Int?
+
+  public init(
+    address: String? = nil,
+    prefixLength: Int = 32,
+    routes: [String] = [],
+    excludedRoutes: [String] = [],
+    dnsServers: [String] = [],
+    searchDomains: [String] = [],
+    mtu: Int? = nil
+  ) {
+    self.address = address
+    self.prefixLength = prefixLength
+    self.routes = routes
+    self.excludedRoutes = excludedRoutes
+    self.dnsServers = dnsServers
+    self.searchDomains = searchDomains
+    self.mtu = mtu
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case address, prefixLength, routes, excludedRoutes, dnsServers, searchDomains, mtu
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    address = try container.decodeIfPresent(String.self, forKey: .address)
+    prefixLength = try container.decodeIfPresent(Int.self, forKey: .prefixLength) ?? 32
+    routes = try container.decodeIfPresent([String].self, forKey: .routes) ?? []
+    excludedRoutes =
+      try container.decodeIfPresent([String].self, forKey: .excludedRoutes) ?? []
+    dnsServers = try container.decodeIfPresent([String].self, forKey: .dnsServers) ?? []
+    searchDomains =
+      try container.decodeIfPresent([String].self, forKey: .searchDomains) ?? []
+    mtu = try container.decodeIfPresent(Int.self, forKey: .mtu)
+  }
+}

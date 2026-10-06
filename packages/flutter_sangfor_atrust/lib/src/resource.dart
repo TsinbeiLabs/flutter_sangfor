@@ -49,10 +49,7 @@ class ATrustNodeGroup {
 class ATrustResourceParser {
   const ATrustResourceParser();
 
-  ATrustResource parse(
-    Map<String, Object?> root, {
-    String? serverHost,
-  }) {
+  ATrustResource parse(Map<String, Object?> root, {String? serverHost}) {
     final data = _map(root['data']);
     final appList = _map(_map(data['appList'])['data']);
     final routes = <ATrustRoute>[];
@@ -71,22 +68,24 @@ class ATrustResourceParser {
             : false;
         for (final address in _list(appMap['addressList']).whereType<Map>()) {
           final addressMap = _map(address);
-          final protocol =
-              (_string(addressMap['protocol']) ?? '').toLowerCase();
+          final protocol = (_string(addressMap['protocol']) ?? '')
+              .toLowerCase();
           if (!{'tcp', 'udp', 'all'}.contains(protocol)) continue;
           final ports = _ports(_string(addressMap['port']) ?? '');
           final host = _string(addressMap['host']) ?? '';
           if (ports == null || host.isEmpty) continue;
-          routes.add(ATrustRoute(
-            host: host,
-            protocol: protocol,
-            portMin: ports.$1,
-            portMax: ports.$2,
-            appId: appId,
-            nodeGroupId: nodeGroupId,
-            addrPretend: pretend,
-            enableTcpPrefL3: tcpPrefL3,
-          ));
+          routes.add(
+            ATrustRoute(
+              host: atrustNormalizeRouteHost(host),
+              protocol: protocol,
+              portMin: ports.$1,
+              portMax: ports.$2,
+              appId: appId,
+              nodeGroupId: nodeGroupId,
+              addrPretend: pretend,
+              enableTcpPrefL3: tcpPrefL3,
+            ),
+          );
         }
       }
     }
@@ -162,6 +161,25 @@ int? _ipv4ToLong(String address) {
 
 bool _isIPv4(String value) => _ipv4ToLong(value) != null;
 
+/// Writes an address range the way every matcher in this package reads it.
+///
+/// Gateways publish ranges as `a.b.c.d-e.f.g.h`, while [atrustRouteHostCovers]
+/// (and the Swift and Rust data planes built from the same session plan) only
+/// know `min~max`, so a dash range matched nothing and never reached the OS
+/// route table. Normalizing once, where the resource is parsed, keeps one
+/// canonical spelling downstream. Anything that is not exactly two IPv4
+/// addresses around a dash is returned unchanged, so host names containing `-`
+/// are never touched.
+String atrustNormalizeRouteHost(String host) {
+  final trimmed = host.trim();
+  final dash = trimmed.indexOf('-');
+  if (dash <= 0 || trimmed.contains('/') || trimmed.contains('~')) return host;
+  final low = trimmed.substring(0, dash).trim();
+  final high = trimmed.substring(dash + 1).trim();
+  if (_isIPv4(low) && _isIPv4(high)) return '$low~$high';
+  return host;
+}
+
 /// True when [host] (a single address, CIDR, or `min~max` range) covers [destIP].
 bool atrustRouteHostCovers(String host, String destIP) {
   if (host.contains('/')) {
@@ -172,8 +190,9 @@ bool atrustRouteHostCovers(String host, String destIP) {
     if (base == null || prefix == null || dest == null) return false;
     if (prefix < 0 || prefix > 32) return false;
     if (prefix == 0) return true;
-    final mask =
-        prefix == 32 ? 0xffffffff : (0xffffffff << (32 - prefix)) & 0xffffffff;
+    final mask = prefix == 32
+        ? 0xffffffff
+        : (0xffffffff << (32 - prefix)) & 0xffffffff;
     return (base & mask) == (dest & mask);
   }
   if (host.contains('~')) {
