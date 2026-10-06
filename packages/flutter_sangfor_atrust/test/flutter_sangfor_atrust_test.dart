@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter_sangfor/flutter_sangfor.dart';
 import 'package:flutter_sangfor_atrust/flutter_sangfor_atrust.dart';
 import 'package:test/test.dart';
@@ -58,7 +57,10 @@ class SecondaryFakeHttpClient extends http.BaseClient {
             'data': <String, Object?>{
               'nextService': 'auth/sms',
               'nextServiceList': <Object?>[
-                <String, Object?>{'authType': 'auth/sms', 'authId': 'sms-1'},
+                <String, Object?>{
+                  'authType': 'auth/sms',
+                  'authId': 'sms-1',
+                },
               ],
             },
           }
@@ -110,31 +112,37 @@ class LoginFakeHttpClient extends http.BaseClient {
     final path = request.url.path;
     final response = switch (path) {
       '/passport/v1/public/authConfig' => <String, Object?>{
-        'code': 0,
-        'data': <String, Object?>{
-          'isLogin': 0,
-          'csrfToken': 'csrf',
-          'pubKey': 'F' * 256,
-          'pubKeyExp': '1',
-          'antiReplayRand': 'nonce',
-          'authServerInfoList': <Object?>[
-            <String, Object?>{'authType': 'auth/psw', 'loginDomain': 'corp'},
-          ],
+          'code': 0,
+          'data': <String, Object?>{
+            'isLogin': 0,
+            'csrfToken': 'csrf',
+            'pubKey': 'F' * 256,
+            'pubKeyExp': '1',
+            'antiReplayRand': 'nonce',
+            'authServerInfoList': <Object?>[
+              <String, Object?>{
+                'authType': 'auth/psw',
+                'loginDomain': 'corp',
+              },
+            ],
+          },
         },
-      },
       '/passport/v1/auth/psw' => <String, Object?>{
-        'code': 0,
-        'data': <String, Object?>{'ticket': 'ticket-1'},
-      },
-      '/passport/v1/auth/authCheck' => <String, Object?>{
-        'code': 0,
-        'data': <String, Object?>{
-          'nextService': 'auth/sms',
-          'nextServiceList': <Object?>[
-            <String, Object?>{'authType': 'auth/sms', 'authId': 'sms-1'},
-          ],
+          'code': 0,
+          'data': <String, Object?>{'ticket': 'ticket-1'},
         },
-      },
+      '/passport/v1/auth/authCheck' => <String, Object?>{
+          'code': 0,
+          'data': <String, Object?>{
+            'nextService': 'auth/sms',
+            'nextServiceList': <Object?>[
+              <String, Object?>{
+                'authType': 'auth/sms',
+                'authId': 'sms-1',
+              },
+            ],
+          },
+        },
       '/passport/v1/auth/sms' =>
         request.url.queryParameters['action'] == 'checkcode'
             ? <String, Object?>{
@@ -143,16 +151,16 @@ class LoginFakeHttpClient extends http.BaseClient {
               }
             : <String, Object?>{'code': 0, 'data': <String, Object?>{}},
       '/passport/v1/user/onlineInfo' => <String, Object?>{
-        'code': 0,
-        'data': <String, Object?>{'username': 'alice'},
-      },
-      '/controller/v1/user/clientResource' => <String, Object?>{
-        'code': 0,
-        'data': <String, Object?>{
-          'appList': <String, Object?>{'data': <String, Object?>{}},
-          'sdpPolicy': <String, Object?>{'data': <String, Object?>{}},
+          'code': 0,
+          'data': <String, Object?>{'username': 'alice'},
         },
-      },
+      '/controller/v1/user/clientResource' => <String, Object?>{
+          'code': 0,
+          'data': <String, Object?>{
+            'appList': <String, Object?>{'data': <String, Object?>{}},
+            'sdpPolicy': <String, Object?>{'data': <String, Object?>{}},
+          },
+        },
       _ => <String, Object?>{'code': 0, 'data': <String, Object?>{}},
     };
     return http.StreamedResponse(
@@ -269,7 +277,10 @@ Uint8List buildTCPSegment({
   return segment;
 }
 
-Uint8List buildUDPSegment({int sourcePort = 1234, int destinationPort = 53}) {
+Uint8List buildUDPSegment({
+  int sourcePort = 1234,
+  int destinationPort = 53,
+}) {
   final segment = Uint8List(8);
   final data = ByteData.sublistView(segment);
   data.setUint16(0, sourcePort, Endian.big);
@@ -326,7 +337,10 @@ void main() {
 
   test('rejects invalid tunnel lengths and orders node candidates', () {
     final decoder = ATrustTunnelFrameDecoder(maxFrameLength: 4);
-    expect(() => decoder.add(<int>[0, 0, 0, 5]), throwsFormatException);
+    expect(
+      () => decoder.add(<int>[0, 0, 0, 5]),
+      throwsFormatException,
+    );
     final resource = ATrustResource(
       routes: const <ATrustRoute>[],
       dnsServers: const <String>[],
@@ -338,11 +352,10 @@ void main() {
         ),
       },
     );
-    expect(atrustNodeCandidates(resource), <String>[
-      'wan:441',
-      'shared:441',
-      'lan:441',
-    ]);
+    expect(
+      atrustNodeCandidates(resource),
+      <String>['wan:441', 'shared:441', 'lan:441'],
+    );
   });
 
   test('enforces the tunnel lifecycle state machine', () {
@@ -363,31 +376,40 @@ void main() {
   });
 
   test('encodes the observed aTrust L3 request envelopes', () {
-    expect(ATrustL3Protocol.heartbeatRequest(), <int>[0x05, 0x15, 0x00, 0x00]);
     expect(
-      ATrustL3Protocol.dataRequest('token', Uint8List.fromList(<int>[1, 2])),
+      ATrustL3Protocol.heartbeatRequest(),
+      <int>[0x05, 0x15, 0x00, 0x00],
+    );
+    expect(
+      ATrustL3Protocol.dataRequest(
+        'token',
+        Uint8List.fromList(<int>[1, 2]),
+      ),
       <int>[0x05, 0x14, 5, ...'token'.codeUnits, 0, 0, 1, 0, 2, 1, 2],
     );
-    expect(ATrustL3Protocol.authTunnelRequest('sid'), <int>[
-      0x05,
-      0x01,
-      0xd0,
-      0x53,
-      0,
-      0,
-      0x0d,
-      ...utf8.encode('{"sid":"sid"}'),
-      5,
-      4,
-      0,
-      1,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-    ]);
+    expect(
+      ATrustL3Protocol.authTunnelRequest('sid'),
+      <int>[
+        0x05,
+        0x01,
+        0xd0,
+        0x53,
+        0,
+        0,
+        0x0d,
+        ...utf8.encode('{"sid":"sid"}'),
+        5,
+        4,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+      ],
+    );
   });
 
   test('decodes aTrust L3 response frames with status fields', () {
@@ -423,12 +445,12 @@ void main() {
         sourcePort: 1234,
       ),
     );
-    final signature = request.signature(Uint8List.fromList(<int>[1, 2, 3]));
-    expect(signature, matches(RegExp(r'^[0-9A-F]{64}$')));
-    expect(
-      request.toMap(Uint8List.fromList(<int>[1, 2, 3])),
-      containsPair('xRequestSig', signature),
+    final signature = request.signature(
+      Uint8List.fromList(<int>[1, 2, 3]),
     );
+    expect(signature, matches(RegExp(r'^[0-9A-F]{64}$')));
+    expect(request.toMap(Uint8List.fromList(<int>[1, 2, 3])),
+        containsPair('xRequestSig', signature));
   });
 
   test('tracks pending packets and replays them after flow authentication', () {
@@ -445,7 +467,11 @@ void main() {
       destinationAddress: '10.0.0.2',
       destinationPort: 443,
     );
-    final flow = tracker.getOrCreate(key, appId: 'app', nodeGroupId: 'group');
+    final flow = tracker.getOrCreate(
+      key,
+      appId: 'app',
+      nodeGroupId: 'group',
+    );
     expect(tracker.cachePacket(flow, Uint8List.fromList(<int>[1])), isTrue);
     expect(tracker.cachePacket(flow, Uint8List.fromList(<int>[2])), isFalse);
     expect(tracker.complete(flow.id, token: 'token'), <List<int>>[
@@ -470,13 +496,11 @@ void main() {
       rsaCertificate: encoded,
     );
 
-    expect(
-      () => data.verifyCertificateIdentity(<Uint8List>[der]),
-      returnsNormally,
-    );
+    expect(() => data.verifyCertificateIdentity(<Uint8List>[der]),
+        returnsNormally);
     expect(
       () => data.verifyCertificateIdentity(<Uint8List>[
-        Uint8List.fromList(<int>[9]),
+        Uint8List.fromList(<int>[9])
       ]),
       throwsFormatException,
     );
@@ -543,103 +567,97 @@ void main() {
     expect(policy.delayForAttempt(4), Duration.zero);
   });
 
-  test(
-    'bridges packets in both directions and closes both endpoints',
-    () async {
-      final channel = FakeTunnelChannel();
-      final device = FakePacketDevice();
-      final io = ATrustTunnelIo();
-      await io.start(channel: channel, device: device);
+  test('bridges packets in both directions and closes both endpoints',
+      () async {
+    final channel = FakeTunnelChannel();
+    final device = FakePacketDevice();
+    final io = ATrustTunnelIo();
+    await io.start(channel: channel, device: device);
 
-      device.packetController.add(Uint8List.fromList(<int>[1, 2]));
-      await Future<void>.delayed(Duration.zero);
-      expect(channel.sent, hasLength(1));
-      expect(channel.sent.single.length, 7);
+    device.packetController.add(Uint8List.fromList(<int>[1, 2]));
+    await Future<void>.delayed(Duration.zero);
+    expect(channel.sent, hasLength(1));
+    expect(channel.sent.single.length, 7);
 
-      const codec = ATrustTunnelFrameCodec();
-      channel.incomingController.add(
-        codec.encode(
-          ATrustTunnelFrame(
-            type: ATrustTunnelFrameType.data,
-            payload: Uint8List.fromList(<int>[3, 4]),
-          ),
+    const codec = ATrustTunnelFrameCodec();
+    channel.incomingController.add(codec.encode(
+      ATrustTunnelFrame(
+        type: ATrustTunnelFrameType.data,
+        payload: Uint8List.fromList(<int>[3, 4]),
+      ),
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(device.written, <List<int>>[
+      <int>[3, 4]
+    ]);
+
+    await io.close();
+    expect(channel.closed, isTrue);
+    expect(device.closed, isTrue);
+  });
+
+  test('serializes and restores authenticated state without credentials',
+      () async {
+    final snapshot = ATrustSessionSnapshot(
+      server: Uri.parse('https://vpn.example.test'),
+      username: 'alice',
+      deviceId: 'device-1',
+      csrfToken: 'csrf',
+      cookies: const <ATrustCookie>[
+        ATrustCookie(
+          name: 'sid',
+          value: 'session-1',
+          domain: 'vpn.example.test',
+          secure: true,
         ),
-      );
-      await Future<void>.delayed(Duration.zero);
-      expect(device.written, <List<int>>[
-        <int>[3, 4],
-      ]);
+      ],
+    );
+    final restored = ATrustSessionSnapshot.fromMap(snapshot.toMap());
+    final inner = SessionFakeHttpClient();
+    final client =
+        ATrustSessionClient.withCookies(restored.cookies, inner: inner);
+    await client.get(Uri.parse('https://vpn.example.test/status'));
 
-      await io.close();
-      expect(channel.closed, isTrue);
-      expect(device.closed, isTrue);
-    },
-  );
-
-  test(
-    'serializes and restores authenticated state without credentials',
-    () async {
-      final snapshot = ATrustSessionSnapshot(
-        server: Uri.parse('https://vpn.example.test'),
-        username: 'alice',
-        deviceId: 'device-1',
-        csrfToken: 'csrf',
-        cookies: const <ATrustCookie>[
-          ATrustCookie(
-            name: 'sid',
-            value: 'session-1',
-            domain: 'vpn.example.test',
-            secure: true,
-          ),
-        ],
-      );
-      final restored = ATrustSessionSnapshot.fromMap(snapshot.toMap());
-      final inner = SessionFakeHttpClient();
-      final client = ATrustSessionClient.withCookies(
-        restored.cookies,
-        inner: inner,
-      );
-      await client.get(Uri.parse('https://vpn.example.test/status'));
-
-      expect(restored.sid, 'session-1');
-      expect(restored.toMap().containsKey('password'), isFalse);
-      expect(inner.receivedCookie, 'sid=session-1');
-    },
-  );
+    expect(restored.sid, 'session-1');
+    expect(restored.toMap().containsKey('password'), isFalse);
+    expect(inner.receivedCookie, 'sid=session-1');
+  });
 
   test('parses WAN and LAN node groups with default tunnel port', () {
-    final resource = const ATrustResourceParser().parse(<String, Object?>{
-      'data': <String, Object?>{
-        'appList': <String, Object?>{
-          'data': <String, Object?>{
-            'config': <String, Object?>{
-              'nodeGroupConf': <String, Object?>{
-                'majorNodeGroup': <String, Object?>{'id': 'group-1'},
-                'nodeGroupList': <Object?>[
-                  <String, Object?>{
-                    'id': 'group-1',
-                    'addressInfo': <Object?>[
-                      <String, Object?>{
-                        'address': '{{sdpcHost}}',
-                        'type': 'WAN',
-                      },
-                      <String, Object?>{
-                        'address': '10.0.0.2:442',
-                        'type': 'LAN',
-                      },
-                    ],
-                  },
-                ],
+    final resource = const ATrustResourceParser().parse(
+      <String, Object?>{
+        'data': <String, Object?>{
+          'appList': <String, Object?>{
+            'data': <String, Object?>{
+              'config': <String, Object?>{
+                'nodeGroupConf': <String, Object?>{
+                  'majorNodeGroup': <String, Object?>{'id': 'group-1'},
+                  'nodeGroupList': <Object?>[
+                    <String, Object?>{
+                      'id': 'group-1',
+                      'addressInfo': <Object?>[
+                        <String, Object?>{
+                          'address': '{{sdpcHost}}',
+                          'type': 'WAN',
+                        },
+                        <String, Object?>{
+                          'address': '10.0.0.2:442',
+                          'type': 'LAN',
+                        },
+                      ],
+                    },
+                  ],
+                },
               },
             },
           },
         },
       },
-    }, serverHost: 'vpn.example.test');
+      serverHost: 'vpn.example.test',
+    );
 
-    expect(resource.nodeGroups['group-1']?.wan, <String>[
-      'vpn.example.test:441',
-    ]);
+    expect(
+        resource.nodeGroups['group-1']?.wan, <String>['vpn.example.test:441']);
     expect(resource.nodeGroups['group-1']?.lan, <String>['10.0.0.2:442']);
   });
 
@@ -674,33 +692,31 @@ void main() {
     expect(client.payload['authId'], 'bind-1');
   });
 
-  test(
-    'submits TOTP and RADIUS challenges to their protocol endpoints',
-    () async {
-      final client = TokenFakeHttpClient();
-      final authenticator = ATrustSecondaryAuthenticator(
-        server: Uri.parse('https://vpn.example.test'),
-        csrfToken: 'csrf',
-        client: client,
-      );
+  test('submits TOTP and RADIUS challenges to their protocol endpoints',
+      () async {
+    final client = TokenFakeHttpClient();
+    final authenticator = ATrustSecondaryAuthenticator(
+      server: Uri.parse('https://vpn.example.test'),
+      csrfToken: 'csrf',
+      client: client,
+    );
 
-      final totpResult = await authenticator.verifyTotp(
-        code: '123456',
-        username: 'alice@corp',
-      );
-      expect(client.uri.path, '/passport/v1/auth/token');
-      expect(client.payload['totpToken'], '123456');
-      expect(totpResult.service, ATrustAuthService.none);
+    final totpResult = await authenticator.verifyTotp(
+      code: '123456',
+      username: 'alice@corp',
+    );
+    expect(client.uri.path, '/passport/v1/auth/token');
+    expect(client.payload['totpToken'], '123456');
+    expect(totpResult.service, ATrustAuthService.none);
 
-      await authenticator.verifyRadius(
-        code: '654321',
-        step: const ATrustAuthStep(service: ATrustAuthService.challenge),
-        username: 'alice@corp',
-      );
-      expect(client.uri.path, '/passport/v1/auth/challenge');
-      expect(client.payload['radiusToken'], '654321');
-    },
-  );
+    await authenticator.verifyRadius(
+      code: '654321',
+      step: const ATrustAuthStep(service: ATrustAuthService.challenge),
+      username: 'alice@corp',
+    );
+    expect(client.uri.path, '/passport/v1/auth/challenge');
+    expect(client.payload['radiusToken'], '654321');
+  });
 
   test('coordinates the complete password and SMS login flow', () async {
     final client = LoginFakeHttpClient();
@@ -719,9 +735,7 @@ void main() {
     expect(session.sid, 'session-1');
     expect(client.paths, contains('/controller/v1/user/clientResource'));
     expect(
-      client.paths.where((path) => path.endsWith('/auth/sms')),
-      hasLength(2),
-    );
+        client.paths.where((path) => path.endsWith('/auth/sms')), hasLength(2));
   });
 
   test('persists SID cookies across post-login requests', () async {
@@ -818,76 +832,64 @@ void main() {
     expect(resource.majorNodeGroup, 'node-1');
   });
 
-  test(
-    'accepts a bare-string majorNodeGroup and falls back to the sole group',
-    () {
-      Map<String, Object?> resourceWithMajor(Object? major) =>
-          <String, Object?>{
-            'data': <String, Object?>{
-              'appList': <String, Object?>{
-                'data': <String, Object?>{
-                  'config': <String, Object?>{
-                    'nodeGroupConf': <String, Object?>{
-                      'majorNodeGroup': major,
-                      'nodeGroupList': <Object?>[
-                        <String, Object?>{
-                          'id': 'group-a',
-                          'addressInfo': <Object?>[
-                            <String, Object?>{
-                              'address': 'wan.example.com',
-                              'type': 'wan',
-                            },
-                          ],
-                        },
-                      ],
-                    },
+  test('accepts a bare-string majorNodeGroup and falls back to the sole group',
+      () {
+    Map<String, Object?> resourceWithMajor(Object? major) => <String, Object?>{
+          'data': <String, Object?>{
+            'appList': <String, Object?>{
+              'data': <String, Object?>{
+                'config': <String, Object?>{
+                  'nodeGroupConf': <String, Object?>{
+                    'majorNodeGroup': major,
+                    'nodeGroupList': <Object?>[
+                      <String, Object?>{
+                        'id': 'group-a',
+                        'addressInfo': <Object?>[
+                          <String, Object?>{
+                            'address': 'wan.example.com',
+                            'type': 'wan',
+                          },
+                        ],
+                      },
+                    ],
                   },
                 },
               },
             },
-          };
+          },
+        };
 
-      final bareString = const ATrustResourceParser().parse(
-        resourceWithMajor('group-a'),
-      );
-      expect(bareString.majorNodeGroup, 'group-a');
-      expect(
-        bareString.nodeGroups['group-a']!.wan.single,
-        'wan.example.com:441',
-      );
+    final bareString =
+        const ATrustResourceParser().parse(resourceWithMajor('group-a'));
+    expect(bareString.majorNodeGroup, 'group-a');
+    expect(bareString.nodeGroups['group-a']!.wan.single, 'wan.example.com:441');
 
-      final missing = const ATrustResourceParser().parse(
-        resourceWithMajor(null),
-      );
-      expect(missing.majorNodeGroup, 'group-a');
+    final missing = const ATrustResourceParser().parse(resourceWithMajor(null));
+    expect(missing.majorNodeGroup, 'group-a');
 
-      final unknown = const ATrustResourceParser().parse(
-        resourceWithMajor(<String, Object?>{'id': 'no-such-group'}),
-      );
-      expect(unknown.majorNodeGroup, 'group-a');
-    },
-  );
+    final unknown = const ATrustResourceParser()
+        .parse(resourceWithMajor(<String, Object?>{'id': 'no-such-group'}));
+    expect(unknown.majorNodeGroup, 'group-a');
+  });
 
   test('matchTcpRoute falls back to L3-preferred routes on demand', () {
     ATrustRoute route(String host, {bool tcpPrefL3 = false}) => ATrustRoute(
-      host: host,
-      protocol: 'tcp',
-      portMin: 443,
-      portMax: 443,
-      appId: 'app-$host',
-      nodeGroupId: 'group-1',
-      addrPretend: true,
-      enableTcpPrefL3: tcpPrefL3,
-    );
+          host: host,
+          protocol: 'tcp',
+          portMin: 443,
+          portMax: 443,
+          appId: 'app-$host',
+          nodeGroupId: 'group-1',
+          addrPretend: true,
+          enableTcpPrefL3: tcpPrefL3,
+        );
     final routes = <ATrustRoute>[
       route('plain.example.com'),
       route('l3.example.com', tcpPrefL3: true),
     ];
 
-    expect(
-      matchTcpRoute(routes, 'plain.example.com', 443)!.appId,
-      'app-plain.example.com',
-    );
+    expect(matchTcpRoute(routes, 'plain.example.com', 443)!.appId,
+        'app-plain.example.com');
     expect(matchTcpRoute(routes, 'l3.example.com', 443), isNull);
     expect(
       matchTcpRoute(
@@ -895,16 +897,13 @@ void main() {
         'l3.example.com',
         443,
         includeL3Preferred: true,
-      )!.appId,
+      )!
+          .appId,
       'app-l3.example.com',
     );
     expect(
-      matchTcpRoute(
-        routes,
-        'no-such.example.com',
-        443,
-        includeL3Preferred: true,
-      ),
+      matchTcpRoute(routes, 'no-such.example.com', 443,
+          includeL3Preferred: true),
       isNull,
     );
   });
@@ -920,15 +919,15 @@ void main() {
       antiReplayRandom: 'nonce',
     );
 
-    final result = await ATrustPasswordAuthenticator(client: client)
-        .authenticate(
-          server: Uri.parse('https://vpn.example.test'),
-          username: 'alice',
-          password: 'secret',
-          loginDomain: 'corp',
-          config: config,
-          deviceId: 'device-1',
-        );
+    final result =
+        await ATrustPasswordAuthenticator(client: client).authenticate(
+      server: Uri.parse('https://vpn.example.test'),
+      username: 'alice',
+      password: 'secret',
+      loginDomain: 'corp',
+      config: config,
+      deviceId: 'device-1',
+    );
 
     final body = jsonDecode(client.requestBody!) as Map<String, Object?>;
     expect(client.requestedUri.path, '/passport/v1/auth/psw');
@@ -939,8 +938,9 @@ void main() {
 
   test('reads the advertised aTrust authentication configuration', () async {
     final client = FakeHttpClient();
-    final config = await ATrustApiClient(client: client)
-        .fetchAuthConfig(Uri.parse('https://vpn.example.test/ignored'));
+    final config = await ATrustApiClient(client: client).fetchAuthConfig(
+      Uri.parse('https://vpn.example.test/ignored'),
+    );
 
     expect(client.requestedUri.path, '/passport/v1/public/authConfig');
     expect(config.csrfToken, 'csrf');
@@ -1024,10 +1024,7 @@ void main() {
 
   test('parses IPv4, TCP, and UDP packet headers', () {
     final tcpSegment = buildTCPSegment(
-      sourcePort: 1234,
-      destinationPort: 443,
-      flags: tcpSynFlag | tcpAckFlag,
-    );
+        sourcePort: 1234, destinationPort: 443, flags: tcpSynFlag | tcpAckFlag);
     final packet = buildIPv4Packet(payload: tcpSegment);
 
     final ip = ATrustIPv4Packet(packet);
@@ -1047,10 +1044,8 @@ void main() {
     expect(tcp.sequenceNumber, 100);
 
     final udpSegment = buildUDPSegment(sourcePort: 5353, destinationPort: 53);
-    final udpPacket = buildIPv4Packet(
-      protocol: udpProtocol,
-      payload: udpSegment,
-    );
+    final udpPacket =
+        buildIPv4Packet(protocol: udpProtocol, payload: udpSegment);
     final udp = ATrustUDPPacket(ATrustIPv4Packet(udpPacket).payload);
     expect(udp.valid, isTrue);
     expect(udp.sourcePort, 5353);
@@ -1174,7 +1169,9 @@ void main() {
     expect(vip.addresses, <String>['10.0.0.42']);
 
     final jsonVip = ATrustL3Protocol.extractVIPs(
-      Uint8List.fromList(utf8.encode('{"vip":"10.1.2.3","vip6":"::1"}')),
+      Uint8List.fromList(
+        utf8.encode('{"vip":"10.1.2.3","vip6":"::1"}'),
+      ),
     );
     expect(jsonVip, <String>['10.1.2.3', '::1']);
   });
@@ -1258,9 +1255,9 @@ void main() {
     expect(message[2], 0x81);
     expect(message[3], 0x53);
     expect(message[4], 0x03);
-    final authJson = jsonDecode(
-      utf8.decode(message.sublist(7, message.length - 10)),
-    ) as Map<String, Object?>;
+    final authJson =
+        jsonDecode(utf8.decode(message.sublist(7, message.length - 10)))
+            as Map<String, Object?>;
     expect(authJson['sid'], 'sid');
     expect(authJson['xRequestSig'], matches(RegExp(r'^[0-9A-F]{64}$')));
     final destination = message.sublist(message.length - 10);
@@ -1277,9 +1274,8 @@ void main() {
     final responseBuilder = BytesBuilder();
     responseBuilder.add(<int>[0x05, 0x81]);
     responseBuilder.add(<int>[0x53, 0x00]);
-    final authResponse = utf8.encode(
-      jsonEncode(<String, Object?>{'code': 0, 'message': 'ok'}),
-    );
+    final authResponse =
+        utf8.encode(jsonEncode(<String, Object?>{'code': 0, 'message': 'ok'}));
     final authLength = ByteData(2)
       ..setUint16(0, authResponse.length, Endian.big);
     responseBuilder.add(authLength.buffer.asUint8List());
@@ -1313,8 +1309,7 @@ void main() {
     expect(decoded, data);
 
     final (eofData, eofFlag) = ATrustTcpTunnelProtocol.parseDataFrame(
-      ATrustTcpTunnelProtocol.eofFrame(),
-    );
+        ATrustTcpTunnelProtocol.eofFrame());
     expect(eofFlag, isTrue);
     expect(eofData, isEmpty);
 
@@ -1332,7 +1327,10 @@ void main() {
       'enable': 0,
     });
     expect(agentToken.enable, 0);
-    expect(() => agentToken.verifyChallenge(), throwsStateError);
+    expect(
+      () => agentToken.verifyChallenge(),
+      throwsStateError,
+    );
     expect(sessionId.length, 32);
   });
 
