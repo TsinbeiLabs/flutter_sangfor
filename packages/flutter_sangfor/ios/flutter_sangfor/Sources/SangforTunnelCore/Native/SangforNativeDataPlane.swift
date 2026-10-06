@@ -57,6 +57,8 @@ public final class SangforNativeDataPlane {
   private var reconnectTasks: [String: SangforScheduledTask] = [:]
   private var terminator: ATrustTcpTerminator?
   private var closed = false
+  /// How many successful dials are still logged; failures always are.
+  private var dialLogBudget = 40
 
   public private(set) var statistics = Statistics()
   public private(set) var virtualAddresses: [String] = []
@@ -407,6 +409,14 @@ public final class SangforNativeDataPlane {
     }
     let dialHost = plan.dialHosts[host] ?? host
     let destination = "\(dialHost):\(port)"
+    let destinationIp: String? = route.addrPretend
+      ? nil
+      : resolvedIp.flatMap { SangforAddressBytes.ipv4($0) != nil ? $0 : nil }
+    // What a failed (or one of the first successful) dials was about, so a
+    // refusal can be told apart by host, address and resource flag.
+    let description =
+      "\(destination) destIP=\(destinationIp ?? "none") "
+      + "pretend=\(route.addrPretend) app=\(route.appId.prefix(8))"
     let request = ATrustTcpTunnelAuthRequest(
       sid: plan.sid,
       appId: route.appId,
@@ -420,15 +430,14 @@ public final class SangforNativeDataPlane {
       // Pretending the address means the gateway resolves the name itself.
       // Only a resource the gateway does not resolve itself takes an address,
       // and it has to be an address: a host name here is refused.
-      destIp: route.addrPretend
-        ? nil
-        : resolvedIp.flatMap { SangforAddressBytes.ipv4($0) != nil ? $0 : nil },
+      destIp: destinationIp,
       process: plan.process
     )
     dialer(endpoint.host, endpoint.port) { [weak self] result in
       guard let self else { return }
       switch result {
       case .failure(let error):
+        self.log("tcp tunnel node dial failed: \(description): \(error)")
         completion(.failure(error))
       case .success(let channel):
         ATrustTcpTunnelStream.connect(
@@ -441,8 +450,13 @@ public final class SangforNativeDataPlane {
           completion: { streamResult in
             switch streamResult {
             case .failure(let error):
+              self.log("tcp tunnel refused: \(description): \(error)")
               completion(.failure(error))
             case .success(let stream):
+              if self.dialLogBudget > 0 {
+                self.dialLogBudget -= 1
+                self.log("tcp tunnel dial ok: \(description)")
+              }
               completion(.success(stream))
             }
           }
