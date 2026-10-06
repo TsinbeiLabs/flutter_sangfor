@@ -39,8 +39,16 @@ public final class ATrustTcpTerminator {
     public init() {}
   }
 
+  /// Opens the upstream for one terminated flow. [host] is the name to dial
+  /// (the host name the resource was published under when there is one);
+  /// [resolvedAddress] is the IPv4 address the client actually connected to,
+  /// which a gateway that does not resolve names itself (`addrPretend == false`)
+  /// has to be given.
   public typealias Dialer =
-    (_ host: String, _ port: Int, _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void) -> Void
+    (
+      _ host: String, _ port: Int, _ resolvedAddress: String,
+      _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+    ) -> Void
   public typealias TerminationFilter = (_ destinationAddress: String, _ destinationPort: Int) -> Bool
   public typealias DialHostResolver = (_ destinationAddress: String, _ destinationPort: Int) -> String?
 
@@ -354,7 +362,7 @@ final class TerminatedConnection {
   private func openUpstream() {
     guard let terminator else { return }
     let host = terminator.resolveDialHost?(serverAddress, serverPort) ?? serverAddress
-    terminator.dial(host, serverPort) { [weak self] result in
+    terminator.dial(host, serverPort, serverAddress) { [weak self] result in
       guard let self, !self.disposed else { return }
       switch result {
       case .failure(let error):

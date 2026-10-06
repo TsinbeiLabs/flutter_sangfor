@@ -24,6 +24,16 @@
 * When the gateway assigns an interface address other than the one the tunnel
   was configured with, the extension re-applies its settings with the assigned
   one instead of leaving replies addressed to a stranger.
+* TCP tunnel dials to a resource the gateway does not resolve itself
+  (`addrPretend == false`, about a sixth of what a gateway publishes) now carry
+  the destination's IPv4 address, and the gateway no longer closes the
+  connection during the handshake. The terminator used to send the *host name*
+  as `destIP`, and the extension's proxy sent nothing. The terminator's dialer
+  is now given the address the client connected to; the proxy takes the address
+  from the plan's pre-resolved hosts, or resolves the name on demand
+  (`SangforNativeDataPlane.Configuration.hostResolver`, set to the system
+  resolver by the extension). A resource the gateway resolves itself still gets
+  no address.
 * The extension logs how node certificates are checked (pinned, or not verified
   because the gateway advertised no pins).
 

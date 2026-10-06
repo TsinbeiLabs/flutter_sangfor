@@ -99,7 +99,6 @@ public final class SangforNativeTunnelRuntime {
           }
         }
       },
-      configuration: planeConfiguration,
       log: { [weak self] message in self?.log(message) }
     )
     plane.onIngressPacket = { [weak self] packet in
