@@ -48,6 +48,11 @@ public struct ATrustSessionPlan: Codable, Equatable {
   /// The network settings the app computed, for starts that arrive without
   /// start options.
   public let tunnelSettings: SangforPlanTunnelSettings?
+  /// Every host name that resolved to an address, where [dialHosts] keeps one.
+  /// Several names often sit behind one address (a shared front end), each
+  /// published on its own ports; this lets a flow be matched by port. Optional:
+  /// without it [dialHosts] is all there is.
+  public let dialHostAliases: [String: [String]]?
 
   public init(
     schemaVersion: Int = ATrustSessionPlan.currentSchemaVersion,
@@ -71,7 +76,8 @@ public struct ATrustSessionPlan: Codable, Equatable {
     heartbeatSeconds: Double = 5,
     mtu: Int = 1400,
     domainRouting: SangforDomainRoutingConfiguration? = nil,
-    tunnelSettings: SangforPlanTunnelSettings? = nil
+    tunnelSettings: SangforPlanTunnelSettings? = nil,
+    dialHostAliases: [String: [String]]? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.sid = sid
@@ -95,6 +101,17 @@ public struct ATrustSessionPlan: Codable, Equatable {
     self.mtu = mtu
     self.domainRouting = domainRouting
     self.tunnelSettings = tunnelSettings
+    self.dialHostAliases = dialHostAliases
+  }
+
+  /// The host name to dial for a flow to [address]:[port]: the first name behind
+  /// the address that a resource covers on that port, else the name [dialHosts]
+  /// has, else nil.
+  public func dialHost(for address: String, port: Int) -> String? {
+    let candidates = dialHostAliases?[address] ?? dialHosts[address].map { [$0] } ?? []
+    let table = routeTable
+    return candidates.first { table.matchTcp(destinationHost: $0, port: port) != nil }
+      ?? candidates.first
   }
 
   /// The request signing key, or nil when it is not valid base64.

@@ -34,6 +34,14 @@
   allowed` for the address the name resolves to). A flow to a bare address, with
   no name behind it, still carries that address when the resource is not
   `addrPretend`.
+* A flow that is in the tunnel only because a host name resolved to its address,
+  and that no published resource covers (another name or port behind a shared
+  front end, e.g. `user-serv.whu.edu.cn:8080` behind the address `ehall` resolves
+  to), is no longer dropped: the extension terminates it locally and carries it
+  out directly (`SangforDirectStream`, `Configuration.directDialer`), as it would
+  have gone without the tunnel. Nothing unpublished is carried by the tunnel. The
+  plan's optional `dialHostAliases` lists every name behind an address so a flow
+  is matched to the name that covers its port.
 * Failed tunnel dials, and the first forty successful ones, log the destination,
   the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified

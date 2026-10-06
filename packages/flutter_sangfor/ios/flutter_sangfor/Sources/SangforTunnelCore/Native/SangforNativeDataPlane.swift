@@ -1,5 +1,14 @@
 import Foundation
 
+/// Opens a connection to `host:port` from outside the tunnel, for a flow the
+/// tunnel was never meant to carry. The completion must be called on the data
+/// plane's queue.
+public typealias SangforDirectDialer =
+  (
+    _ host: String, _ port: Int,
+    _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+  ) -> Void
+
 /// The extension-side data plane: node connections, route decisions, local TCP
 /// termination, and the inbound packet stream.
 ///
@@ -14,6 +23,7 @@ public final class SangforNativeDataPlane {
     public var terminated = 0
     public var unrouted = 0
     public var ingress = 0
+    public var direct = 0
     public var egressBytes = 0
     public var ingressBytes = 0
     public var reconnects = 0
@@ -31,6 +41,10 @@ public final class SangforNativeDataPlane {
     public var connection = ATrustL3Connection.Configuration()
     /// Terminator tuning.
     public var terminator = ATrustTcpTerminator.Configuration()
+    /// Carries a flow outside the tunnel. Without one, a flow the plan routes
+    /// only because a host name resolved to its address, and that no resource
+    /// covers, is dropped.
+    public var directDialer: SangforDirectDialer?
 
     public init() {}
   }
@@ -80,14 +94,20 @@ public final class SangforNativeDataPlane {
   public func start(completion: @escaping (Result<[String], Error>) -> Void) {
     let terminatorConfiguration = configuration.terminator
     let terminator = ATrustTcpTerminator(
-      dialer: { [weak self] host, port, dialCompletion in
-        self?.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
+      dialer: { [weak self] host, port, address, dialCompletion in
+        guard let self else { return }
+        if self.carriesDirectly(address: address, port: port) {
+          self.statistics.direct += 1
+          self.configuration.directDialer?(address, port, dialCompletion)
+        } else {
+          self.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
+        }
       },
       shouldTerminate: { [weak self] address, port in
         self?.shouldTerminate(address: address, port: port) ?? false
       },
-      dialHostResolver: { [weak self] address, _ in
-        self?.plan.dialHosts[address]
+      dialHostResolver: { [weak self] address, port in
+        self?.plan.dialHost(for: address, port: port)
       },
       scheduler: scheduler,
       configuration: terminatorConfiguration,
@@ -184,8 +204,27 @@ public final class SangforNativeDataPlane {
     if routeTable.matchL3(destinationAddress: address, protocolName: "tcp", port: port) != nil {
       return false
     }
-    let host = plan.dialHosts[address] ?? address
+    let host = plan.dialHost(for: address, port: port) ?? address
     return routeTable.matchTcp(destinationHost: host, port: port) != nil
+      || carriesDirectly(address: address, port: port)
+  }
+
+  /// True for a flow that is in the tunnel only because a host name resolved to
+  /// its address: the plan pre-resolves the names of published resources into
+  /// routes, and a route cannot tell one port or one name from another, so
+  /// everything else that shares the address (other names behind the same front
+  /// end, other ports) is pulled in with them. Nothing published covers such a
+  /// flow, so it goes out directly, as it would have without the tunnel.
+  private func carriesDirectly(address: String, port: Int) -> Bool {
+    guard configuration.directDialer != nil,
+      let host = plan.dialHost(for: address, port: port)
+    else {
+      return false
+    }
+    if routeTable.matchL3(destinationAddress: address, protocolName: "tcp", port: port) != nil {
+      return false
+    }
+    return routeTable.matchTcp(destinationHost: host, port: port) == nil
   }
 
   // MARK: - Connections

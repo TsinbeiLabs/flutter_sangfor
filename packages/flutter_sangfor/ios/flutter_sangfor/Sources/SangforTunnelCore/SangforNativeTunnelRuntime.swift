@@ -78,6 +78,10 @@ public final class SangforNativeTunnelRuntime {
         : "node certificates: pinned to \(plan.certificateDigests.count) digest(s)"
     )
     let scheduler = SangforDispatchScheduler(queue: queue)
+    var planeConfiguration = SangforNativeDataPlane.Configuration()
+    planeConfiguration.directDialer = { [queue] host, port, completion in
+      SangforDirectStream.dial(host: host, port: port, queue: queue, completion: completion)
+    }
     let plane = SangforNativeDataPlane(
       plan: plan,
       scheduler: scheduler,
@@ -97,6 +101,7 @@ public final class SangforNativeTunnelRuntime {
           }
         }
       },
+      configuration: planeConfiguration,
       log: { [weak self] message in self?.log(message) }
     )
     plane.onIngressPacket = { [weak self] packet in
