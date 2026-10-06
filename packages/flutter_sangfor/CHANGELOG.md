@@ -34,14 +34,22 @@
   allowed` for the address the name resolves to). A flow to a bare address, with
   no name behind it, still carries that address when the resource is not
   `addrPretend`.
-* A flow that is in the tunnel only because a host name resolved to its address,
-  and that no published resource covers (another name or port behind a shared
-  front end, e.g. `user-serv.whu.edu.cn:8080` behind the address `ehall` resolves
-  to), is no longer dropped: the extension terminates it locally and carries it
-  out directly (`SangforDirectStream`, `Configuration.directDialer`), as it would
-  have gone without the tunnel. Nothing unpublished is carried by the tunnel. The
-  plan's optional `dialHostAliases` lists every name behind an address so a flow
-  is matched to the name that covers its port.
+* Flows to an address the plan pre-resolved from a published host name are now
+  decided by the host name they turn out to want, not by the address alone.
+  Several names often sit behind one address (a shared front end) and only some
+  are published -- `user-serv.whu.edu.cn` shares an address with
+  `ehall.whu.edu.cn` -- so the address could only say "ehall" and the flow was
+  dialed through the tunnel as `ehall`, where nothing serves the other name. The
+  terminator now holds the dial until the client's first bytes arrive and reads
+  the host from them (`SangforFlowSniffer`: the SNI of a TLS ClientHello, the
+  `Host` of an HTTP request). A name a resource covers on that port goes through
+  the tunnel, dialed by that name; any other is carried out directly
+  (`SangforDirectStream`, `Configuration.directDialer`), as it would have gone
+  without the tunnel. When nothing names a host (the server speaks first, ECH, no
+  SNI) a short wait ends and the address's own name decides, as before. Nothing
+  unpublished is carried by the tunnel, and an address no name resolved to is
+  still dropped. The plan's optional `dialHostAliases` lists every name behind an
+  address so a flow is matched to the name that covers its port.
 * Failed tunnel dials, and the first forty successful ones, log the destination,
   the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified

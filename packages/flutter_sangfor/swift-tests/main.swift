@@ -1626,7 +1626,8 @@ func startedPlane(
   routes: [ATrustRoute],
   dialHosts: [String: String],
   aliases: [String: [String]]? = nil,
-  directDialer: SangforDirectDialer? = nil
+  directDialer: SangforDirectDialer? = nil,
+  scheduler: VirtualScheduler = VirtualScheduler()
 ) -> (SangforNativeDataPlane, () -> [FakeChannel]) {
   var channels: [FakeChannel] = []
   var configuration = SangforNativeDataPlane.Configuration()
@@ -1640,7 +1641,7 @@ func startedPlane(
     dialHostAliases: aliases)
   let plane = SangforNativeDataPlane(
     plan: plan,
-    scheduler: VirtualScheduler(),
+    scheduler: scheduler,
     dialer: { _, _, completion in
       let channel = FakeChannel()
       channels.append(channel)
@@ -1726,7 +1727,60 @@ do {
   else { check(false, "a host no resource covers is refused") }
 }
 
-// MARK: - Flows the plan routes only because a name resolved to their address
+// MARK: - Reading the host name from a first flight
+
+/// A TLS ClientHello record, with a server_name extension when [sni] is given.
+func clientHello(sni: String?) -> [UInt8] {
+  func u16(_ value: Int) -> [UInt8] { [UInt8(value >> 8 & 0xff), UInt8(value & 0xff)] }
+  var extensions: [UInt8] = []
+  if let sni {
+    let name = [UInt8](sni.utf8)
+    let entry = [UInt8(0)] + u16(name.count) + name
+    let list = u16(entry.count) + entry
+    extensions += u16(0x0000) + u16(list.count) + list
+  }
+  // A supported_versions extension, so the server_name is not the only one.
+  extensions += u16(0x002b) + u16(3) + [0x02, 0x03, 0x04]
+  var body: [UInt8] = [0x03, 0x03] + [UInt8](repeating: 0x42, count: 32)
+  body += [0x00]                       // session id length
+  body += u16(4) + [0x13, 0x01, 0x13, 0x02]
+  body += [0x01, 0x00]                 // compression
+  body += u16(extensions.count) + extensions
+  let handshake: [UInt8] = [0x01, UInt8(body.count >> 16 & 0xff), UInt8(body.count >> 8 & 0xff), UInt8(body.count & 0xff)] + body
+  return [0x16, 0x03, 0x01] + u16(handshake.count) + handshake
+}
+
+do {
+  func name(_ bytes: [UInt8]) -> SangforFlowSniffer.Result { SangforFlowSniffer.sniff(bytes) }
+  func http(_ text: String) -> [UInt8] { [UInt8](text.utf8) }
+
+  checkEqual(name(http("GET /a HTTP/1.1\r\nHost: User-Serv.Whu.edu.cn\r\nAccept: */*\r\n\r\n")),
+             .name("user-serv.whu.edu.cn"), "an HTTP request names its host, lower-cased")
+  checkEqual(name(http("GET / HTTP/1.1\r\nhost: a.example.test:8080\r\n\r\n")),
+             .name("a.example.test"), "the port is dropped from a Host header")
+  checkEqual(name(http("POST /x HTTP/1.1\r\nContent-Length: 0\r\nHost:b.example.test\r\n\r\n")),
+             .name("b.example.test"), "the Host header is found among others, with or without a space")
+  checkEqual(name(http("GET / HTTP/1.1\r\nHost: 10.0.0.1\r\n\r\n")), .none, "an address as the Host names nobody")
+  checkEqual(name(http("GET / HTTP/1.1\r\nAccept: */*\r\n\r\n")), .none, "a request without a Host names nobody")
+  checkEqual(name(http("GET / HTTP/1.1\r\nHost: a.exam")), .needMore, "an unfinished request waits")
+  checkEqual(name(http("GE")), .needMore, "so does a partial method")
+  checkEqual(name(http("SSH-2.0-OpenSSH\r\n")), .none, "something that is not HTTP names nobody")
+  checkEqual(name([]), .needMore, "nothing yet waits")
+
+  checkEqual(name(clientHello(sni: "Ehall.Whu.edu.cn")), .name("ehall.whu.edu.cn"), "a ClientHello names its SNI, lower-cased")
+  checkEqual(name(clientHello(sni: nil)), .none, "a ClientHello without SNI names nobody")
+  checkEqual(name(clientHello(sni: "10.1.2.3")), .none, "an address as the SNI names nobody")
+  checkEqual(name(clientHello(sni: "localhost")), .none, "a name without a dot is not routed by")
+  let hello = clientHello(sni: "split.example.test")
+  checkEqual(name(Array(hello.prefix(20))), .needMore, "a ClientHello that has not all arrived waits")
+  checkEqual(name(Array(hello.prefix(hello.count - 1))), .needMore, "even one byte short")
+  checkEqual(name(hello), .name("split.example.test"), "and names its host once whole")
+  var garbled = hello
+  garbled[5] = 0x02
+  checkEqual(name(garbled), .none, "a handshake that is not a ClientHello names nobody")
+}
+
+// MARK: - Flows to a pre-resolved address are decided by the name they want
 
 /// A route for one port, as a gateway publishes an application.
 func portRoute(_ host: String, port: Int, pretend: Bool = true) -> ATrustRoute {
@@ -1736,76 +1790,155 @@ func portRoute(_ host: String, port: Int, pretend: Bool = true) -> ATrustRoute {
     enableTcpPrefL3: false)
 }
 
-do {
-  // `portal.example.test` sits behind the same address as `shop.example.test`,
-  // which is the only one published. A flow to the address on another port is
-  // not covered by anything: it must not be dropped, it goes out directly.
-  var directDials: [String] = []
-  let direct: SangforDirectDialer = { host, port, completion in
-    directDials.append("\(host):\(port)")
-    completion(.success(FakeRelayStream()))
+/// Drives one client flow: a SYN, then [payloads] each in its own segment.
+func runFlow(
+  plane: SangforNativeDataPlane,
+  address: String,
+  port: Int,
+  payloads: [[UInt8]]
+) throws {
+  var emitted: [Data] = []
+  plane.onIngressPacket = { emitted.append($0) }
+  plane.handleEgressPacket(
+    try clientPacket(sequence: 1000, acknowledgment: 0, flags: ATrustTcpFlag.syn,
+                     destination: address, destinationPort: port))
+  guard let synAck = segments(emitted).first else { return }
+  var sequence = 1001
+  for payload in payloads {
+    plane.handleEgressPacket(
+      try clientPacket(sequence: sequence, acknowledgment: synAck.sequenceNumber + 1,
+                       flags: ATrustTcpFlag.ack | ATrustTcpFlag.psh, payload: payload,
+                       mss: nil, destination: address, destinationPort: port))
+    sequence += payload.count
   }
-  let (plane, channels) = startedPlane(
-    routes: [portRoute("shop.example.test", port: 443)],
-    dialHosts: ["198.51.100.4": "shop.example.test"],
-    directDialer: direct
-  )
-
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
-                     destination: "198.51.100.4", destinationPort: 8080))
-  checkEqual(directDials, ["198.51.100.4:8080"], "an uncovered port on a pre-resolved address goes out directly")
-  checkEqual(channels().count, 1, "and opens no TCP tunnel connection")
-  checkEqual(plane.statistics.terminated, 1, "it is terminated locally")
-  checkEqual(plane.statistics.unrouted, 0, "and is not dropped")
-  checkEqual(plane.statistics.direct, 1, "and counted as direct")
-
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
-                     destination: "198.51.100.4", destinationPort: 443))
-  checkEqual(directDials.count, 1, "a port the resource covers still goes through the tunnel")
-  checkEqual(channels().count, 2, "by dialing the TCP tunnel")
-
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
-                     destination: "203.0.113.77", destinationPort: 8080))
-  checkEqual(directDials.count, 1, "an address no name resolved to is not carried directly")
-  checkEqual(plane.statistics.unrouted, 1, "it stays unrouted")
 }
 
 do {
-  // Without a direct dialer nothing changes: such a flow is dropped.
-  let (plane, _) = startedPlane(
-    routes: [portRoute("shop.example.test", port: 443)],
-    dialHosts: ["198.51.100.4": "shop.example.test"]
-  )
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
-                     destination: "198.51.100.4", destinationPort: 8080))
-  checkEqual(plane.statistics.unrouted, 1, "without a direct dialer the flow is dropped as before")
-  checkEqual(plane.statistics.direct, 0, "and nothing is carried directly")
+  // `portal.example.test` and `shop.example.test` share one address and only
+  // `shop` is published. The address alone says "shop"; the name the client
+  // asks for says which it is.
+  var directDials: [String] = []
+  var directRelays: [FakeRelayStream] = []
+  let direct: SangforDirectDialer = { host, port, completion in
+    directDials.append("\(host):\(port)")
+    let relay = FakeRelayStream()
+    directRelays.append(relay)
+    completion(.success(relay))
+  }
+  let routes = [portRoute("shop.example.test", port: 80), portRoute("shop.example.test", port: 443)]
+  let dialHosts = ["198.51.100.4": "shop.example.test"]
+
+  // No dial until the client has said who it wants.
+  do {
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 80, payloads: [])
+    checkEqual(channels().count, 1, "a flow to a pre-resolved address opens nothing before it speaks")
+    checkEqual(directDials, [], "and goes nowhere yet")
+    checkEqual(plane.statistics.terminated, 1, "it is terminated locally in the meantime")
+  }
+
+  // The published name: through the tunnel, dialed by that name.
+  do {
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 80,
+                payloads: [[UInt8]("GET / HTTP/1.1\r\nHost: shop.example.test\r\n\r\n".utf8)])
+    checkEqual(channels().count, 2, "a published name dials the tunnel")
+    check(sentText(channels()[1]).contains("shop.example.test:80"), "by that name")
+    checkEqual(directDials, [], "and not directly")
+  }
+
+  // An unpublished name behind the same address: directly, to the address.
+  do {
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 80,
+                payloads: [[UInt8]("GET / HTTP/1.1\r\nHost: portal.example.test\r\n\r\n".utf8)])
+    checkEqual(channels().count, 1, "an unpublished name opens no tunnel connection")
+    checkEqual(directDials, ["198.51.100.4:80"], "it goes out directly, to the address")
+    checkEqual(
+      String(decoding: directRelays.last?.sent ?? [], as: UTF8.self),
+      "GET / HTTP/1.1\r\nHost: portal.example.test\r\n\r\n",
+      "carrying what the client sent, first flight included")
+    checkEqual(plane.statistics.direct, 1, "and is counted as direct")
+  }
+  directDials.removeAll()
+
+  // TLS: the SNI decides, even when the hello arrives in two segments.
+  do {
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    let hello = clientHello(sni: "portal.example.test")
+    let half = hello.count / 2
+    try runFlow(plane: plane, address: "198.51.100.4", port: 443,
+                payloads: [Array(hello[..<half]), Array(hello[half...])])
+    checkEqual(directDials, ["198.51.100.4:443"], "an unpublished SNI goes out directly once the hello is whole")
+    checkEqual(channels().count, 1, "without a tunnel connection")
+  }
+  directDials.removeAll()
+  do {
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 443,
+                payloads: [clientHello(sni: "shop.example.test")])
+    check(sentText(channels()[1]).contains("shop.example.test:443"), "a published SNI dials the tunnel by that name")
+    checkEqual(directDials, [], "and not directly")
+  }
+
+  // Nothing names a host (a client that waits for the server to speak): after
+  // a short wait the address's own name decides, as it did before sniffing.
+  do {
+    let scheduler = VirtualScheduler()
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct, scheduler: scheduler)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 443, payloads: [])
+    checkEqual(channels().count, 1, "a silent client is waited for")
+    scheduler.advance(0.5)
+    checkEqual(channels().count, 2, "then the address's own published name dials the tunnel")
+    check(sentText(channels()[1]).contains("shop.example.test:443"), "by that name")
+  }
+  do {
+    let scheduler = VirtualScheduler()
+    let (plane, channels) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct, scheduler: scheduler)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 25, payloads: [])
+    scheduler.advance(0.5)
+    checkEqual(directDials, ["198.51.100.4:25"], "a silent client on a port nothing publishes goes out directly")
+    checkEqual(channels().count, 1, "without a tunnel connection")
+  }
+  directDials.removeAll()
+
+  // An address no name resolved to is not decided here: no resource covers it.
+  do {
+    let (plane, _) = startedPlane(routes: routes, dialHosts: dialHosts, directDialer: direct)
+    plane.handleEgressPacket(
+      try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
+                       destination: "203.0.113.77", destinationPort: 80))
+    checkEqual(directDials, [], "an address nothing resolved to is not carried directly")
+    checkEqual(plane.statistics.unrouted, 1, "it stays unrouted")
+  }
+
+  // Several names behind one address, each published on its own port.
+  do {
+    let aliasRoutes = [portRoute("shop.example.test", port: 443), portRoute("admin.example.test", port: 8080)]
+    let (plane, channels) = startedPlane(
+      routes: aliasRoutes,
+      dialHosts: ["198.51.100.4": "shop.example.test"],
+      aliases: ["198.51.100.4": ["shop.example.test", "admin.example.test"]],
+      directDialer: direct)
+    try runFlow(plane: plane, address: "198.51.100.4", port: 8080,
+                payloads: [[UInt8]("GET / HTTP/1.1\r\nHost: admin.example.test:8080\r\n\r\n".utf8)])
+    check(sentText(channels()[1]).contains("admin.example.test:8080"), "a name another alias publishes on that port dials the tunnel")
+  }
 }
 
 do {
-  // Several names behind one address, each published on its own port: the flow
-  // is matched to the name that covers its port, whichever the plan lists first.
-  var directDials: [String] = []
-  let direct: SangforDirectDialer = { host, port, completion in
-    directDials.append("\(host):\(port)")
-    completion(.success(FakeRelayStream()))
-  }
+  // Without a direct dialer nothing is sniffed or carried directly.
   let (plane, channels) = startedPlane(
-    routes: [portRoute("shop.example.test", port: 443), portRoute("admin.example.test", port: 8080)],
-    dialHosts: ["198.51.100.4": "shop.example.test"],
-    aliases: ["198.51.100.4": ["shop.example.test", "admin.example.test"]],
-    directDialer: direct
-  )
+    routes: [portRoute("shop.example.test", port: 443)],
+    dialHosts: ["198.51.100.4": "shop.example.test"])
+  try runFlow(plane: plane, address: "198.51.100.4", port: 443, payloads: [])
+  checkEqual(channels().count, 2, "without a direct dialer the dial is not held back")
   plane.handleEgressPacket(
     try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn,
                      destination: "198.51.100.4", destinationPort: 8080))
-  checkEqual(directDials, [], "a port another name behind the address publishes is not carried directly")
-  checkEqual(channels().count, 2, "it dials the tunnel")
-  check(sentText(channels()[1]).contains("admin.example.test:8080"), "for the name that covers the port")
+  checkEqual(plane.statistics.unrouted, 1, "and an uncovered port is dropped as before")
+  checkEqual(plane.statistics.direct, 0, "nothing is carried directly")
+
   let aliasPlan = ATrustSessionPlan(
     sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
     lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",

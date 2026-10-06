@@ -94,14 +94,8 @@ public final class SangforNativeDataPlane {
   public func start(completion: @escaping (Result<[String], Error>) -> Void) {
     let terminatorConfiguration = configuration.terminator
     let terminator = ATrustTcpTerminator(
-      dialer: { [weak self] host, port, address, dialCompletion in
-        guard let self else { return }
-        if self.carriesDirectly(address: address, port: port) {
-          self.statistics.direct += 1
-          self.configuration.directDialer?(address, port, dialCompletion)
-        } else {
-          self.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
-        }
+      dialer: { [weak self] host, port, _, dialCompletion in
+        self?.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
       },
       shouldTerminate: { [weak self] address, port in
         self?.shouldTerminate(address: address, port: port) ?? false
@@ -111,6 +105,7 @@ public final class SangforNativeDataPlane {
       },
       scheduler: scheduler,
       configuration: terminatorConfiguration,
+      flowSniffer: makeFlowSniffer(),
       onError: { [weak self] error in
         self?.log("tcp terminator: \(error)")
       }
@@ -204,27 +199,55 @@ public final class SangforNativeDataPlane {
     if routeTable.matchL3(destinationAddress: address, protocolName: "tcp", port: port) != nil {
       return false
     }
+    // With a way out of the tunnel, every flow to a pre-resolved address is
+    // terminated and decided by the name it turns out to want (see
+    // [makeFlowSniffer]).
+    if configuration.directDialer != nil, isPreResolved(address) { return true }
     let host = plan.dialHost(for: address, port: port) ?? address
     return routeTable.matchTcp(destinationHost: host, port: port) != nil
-      || carriesDirectly(address: address, port: port)
   }
 
-  /// True for a flow that is in the tunnel only because a host name resolved to
-  /// its address: the plan pre-resolves the names of published resources into
-  /// routes, and a route cannot tell one port or one name from another, so
-  /// everything else that shares the address (other names behind the same front
-  /// end, other ports) is pulled in with them. Nothing published covers such a
-  /// flow, so it goes out directly, as it would have without the tunnel.
-  private func carriesDirectly(address: String, port: Int) -> Bool {
-    guard configuration.directDialer != nil,
-      let host = plan.dialHost(for: address, port: port)
-    else {
-      return false
-    }
-    if routeTable.matchL3(destinationAddress: address, protocolName: "tcp", port: port) != nil {
-      return false
-    }
-    return routeTable.matchTcp(destinationHost: host, port: port) == nil
+  /// True for an address the plan routes only because a published host name
+  /// resolved to it. A route cannot tell one name or port from another, so
+  /// everything else behind that address (other names on a shared front end,
+  /// other ports) is pulled into the tunnel with the published name.
+  private func isPreResolved(_ address: String) -> Bool {
+    plan.dialHosts[address] != nil || plan.dialHostAliases?[address] != nil
+  }
+
+  /// Routes a flow to a pre-resolved address by the host name its first bytes
+  /// name -- the SNI of a TLS handshake, the `Host` of an HTTP request -- since
+  /// the address cannot say which of several names the client wants. A name a
+  /// resource covers on that port goes through the tunnel, dialed by that name;
+  /// any other goes out directly, as it would have without the tunnel. When
+  /// nothing names a host, the address's own name decides.
+  private func makeFlowSniffer() -> ATrustTcpTerminator.FlowSniffer? {
+    guard configuration.directDialer != nil else { return nil }
+    return ATrustTcpTerminator.FlowSniffer(
+      wants: { [weak self] address, port in
+        guard let self else { return false }
+        return self.isPreResolved(address)
+          && self.routeTable.matchL3(destinationAddress: address, protocolName: "tcp", port: port) == nil
+      },
+      resolve: { [weak self] address, port, name in
+        guard let self else { return nil }
+        if let name {
+          return self.routeTable.matchTcp(destinationHost: name, port: port) != nil ? name : nil
+        }
+        guard let host = self.plan.dialHost(for: address, port: port),
+          self.routeTable.matchTcp(destinationHost: host, port: port) != nil
+        else { return nil }
+        return host
+      },
+      directDialer: { [weak self] address, port, completion in
+        guard let self, let direct = self.configuration.directDialer else {
+          completion(.failure(SangforTunnelError.channelClosed("the tunnel is closed")))
+          return
+        }
+        self.statistics.direct += 1
+        direct(address, port, completion)
+      }
+    )
   }
 
   // MARK: - Connections

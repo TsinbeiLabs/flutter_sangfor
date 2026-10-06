@@ -51,12 +51,48 @@ public final class ATrustTcpTerminator {
   public typealias TerminationFilter = (_ destinationAddress: String, _ destinationPort: Int) -> Bool
   public typealias DialHostResolver = (_ destinationAddress: String, _ destinationPort: Int) -> String?
 
+  /// Decides where a flow goes by the host name its first bytes name, instead of
+  /// by the address alone. An address cannot say which of several names sitting
+  /// behind it the client wants, and only some of them may be published.
+  public struct FlowSniffer {
+    /// Whether to hold the dial for this destination until the client has said
+    /// who it is talking to.
+    public var wants: (_ address: String, _ port: Int) -> Bool
+    /// The host to dial through the tunnel for what the first bytes named (nil
+    /// when they named nothing), or nil to carry the flow outside the tunnel.
+    public var resolve: (_ address: String, _ port: Int, _ name: String?) -> String?
+    /// Opens the connection for a flow carried outside the tunnel.
+    public var directDialer: (
+      _ address: String, _ port: Int,
+      _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+    ) -> Void
+    /// How long to wait for a first flight before deciding without a name: a
+    /// protocol where the server speaks first never sends one.
+    public var maximumWait: Double
+
+    public init(
+      wants: @escaping (_ address: String, _ port: Int) -> Bool,
+      resolve: @escaping (_ address: String, _ port: Int, _ name: String?) -> String?,
+      directDialer: @escaping (
+        _ address: String, _ port: Int,
+        _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void
+      ) -> Void,
+      maximumWait: Double = 0.4
+    ) {
+      self.wants = wants
+      self.resolve = resolve
+      self.directDialer = directDialer
+      self.maximumWait = maximumWait
+    }
+  }
+
   fileprivate let dial: Dialer
   private let shouldTerminate: TerminationFilter
   fileprivate let resolveDialHost: DialHostResolver?
   fileprivate let scheduler: SangforScheduler
   fileprivate let configuration: Configuration
   private let onError: ((Error) -> Void)?
+  fileprivate let sniffer: FlowSniffer?
 
   private var connections: [String: TerminatedConnection] = [:]
   private var identification: Int
@@ -72,8 +108,10 @@ public final class ATrustTcpTerminator {
     scheduler: SangforScheduler,
     configuration: Configuration = Configuration(),
     randomSeed: Int = 0x5eed,
+    flowSniffer: FlowSniffer? = nil,
     onError: ((Error) -> Void)? = nil
   ) {
+    sniffer = flowSniffer
     dial = dialer
     self.shouldTerminate = shouldTerminate
     resolveDialHost = dialHostResolver
@@ -213,6 +251,10 @@ final class TerminatedConnection {
   private var pendingForUpstream: [UInt8] = []
 
   private var upstream: SangforRelayStream?
+  /// True while the dial is held back to read the host name from the first
+  /// bytes the client sends.
+  private var sniffing = false
+  private var sniffTask: SangforScheduledTask?
   private var retransmitTask: SangforScheduledTask?
   private var idleTask: SangforScheduledTask?
   private var retransmitTimeout: Double
@@ -285,7 +327,14 @@ final class TerminatedConnection {
       sequenceOverride: ourInitialSequence
     )
     armIdleTimer()
-    openUpstream()
+    if let sniffer = terminator.sniffer, sniffer.wants(serverAddress, serverPort) {
+      sniffing = true
+      sniffTask = terminator.scheduler.schedule(after: sniffer.maximumWait) { [weak self] in
+        self?.finishSniffing(name: nil)
+      }
+    } else {
+      openUpstream()
+    }
   }
 
   func abort() {
@@ -351,26 +400,70 @@ final class TerminatedConnection {
     receiveNext = tcpSequenceAdd(receiveNext, fresh.count)
     sendAck()
     guard let upstream, !upstream.isClosed else {
-      // The dial is still in flight; only the first flight can land here.
+      // The dial is still in flight (or being held); only the first flight can
+      // land here.
       pendingForUpstream.append(contentsOf: fresh)
+      if sniffing { sniffFirstFlight() }
       return
     }
     upstream.send(Data(fresh))
   }
 
-  private func openUpstream() {
-    guard let terminator else { return }
-    let host = terminator.resolveDialHost?(serverAddress, serverPort) ?? serverAddress
-    terminator.dial(host, serverPort, serverAddress) { [weak self] result in
-      guard let self, !self.disposed else { return }
-      switch result {
-      case .failure(let error):
-        terminator.report(error)
-        // Nothing can be relayed, so the local stack must be told.
-        self.dispose(reset: true)
-      case .success(let stream):
-        self.attachUpstream(stream)
+  private func sniffFirstFlight() {
+    switch SangforFlowSniffer.sniff(pendingForUpstream) {
+    case .name(let name):
+      finishSniffing(name: name)
+    case .none:
+      finishSniffing(name: nil)
+    case .needMore:
+      if pendingForUpstream.count >= SangforFlowSniffer.maximumBytes {
+        finishSniffing(name: nil)
       }
+    }
+  }
+
+  /// Ends the wait and dials, by the name the client gave or, with none, by what
+  /// the address alone says.
+  private func finishSniffing(name: String?) {
+    guard sniffing, !disposed else { return }
+    sniffing = false
+    sniffTask?.cancel()
+    sniffTask = nil
+    guard let terminator, let sniffer = terminator.sniffer else {
+      openUpstream()
+      return
+    }
+    if let host = sniffer.resolve(serverAddress, serverPort, name) {
+      openUpstream(host: host)
+    } else {
+      sniffer.directDialer(serverAddress, serverPort) { [weak self] result in
+        self?.upstreamOpened(result)
+      }
+    }
+  }
+
+  private func openUpstream(host explicitHost: String? = nil) {
+    guard let terminator else { return }
+    let host = explicitHost
+      ?? terminator.resolveDialHost?(serverAddress, serverPort)
+      ?? serverAddress
+    terminator.dial(host, serverPort, serverAddress) { [weak self] result in
+      self?.upstreamOpened(result)
+    }
+  }
+
+  private func upstreamOpened(_ result: Result<SangforRelayStream, Error>) {
+    guard !disposed else {
+      if case .success(let stream) = result { stream.close() }
+      return
+    }
+    switch result {
+    case .failure(let error):
+      terminator?.report(error)
+      // Nothing can be relayed, so the local stack must be told.
+      dispose(reset: true)
+    case .success(let stream):
+      attachUpstream(stream)
     }
   }
 
@@ -595,6 +688,8 @@ final class TerminatedConnection {
     retransmitTask = nil
     idleTask?.cancel()
     idleTask = nil
+    sniffTask?.cancel()
+    sniffTask = nil
     unacknowledged.removeAll()
     sendQueue.removeAll()
     pendingForUpstream.removeAll()
