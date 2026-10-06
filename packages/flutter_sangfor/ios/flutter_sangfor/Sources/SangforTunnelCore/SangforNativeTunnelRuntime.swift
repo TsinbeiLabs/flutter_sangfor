@@ -79,8 +79,19 @@ public final class SangforNativeTunnelRuntime {
     )
     let scheduler = SangforDispatchScheduler(queue: queue)
     var planeConfiguration = SangforNativeDataPlane.Configuration()
-    planeConfiguration.directDialer = { [queue] host, port, completion in
-      SangforDirectStream.dial(host: host, port: port, queue: queue, completion: completion)
+    var directLogBudget = 20
+    planeConfiguration.directDialer = { [weak self, queue] host, port, completion in
+      SangforDirectStream.dial(host: host, port: port, queue: queue) { result in
+        // Which interface a direct connection settled on says whether it really
+        // left the tunnel; the first few are enough to know.
+        if case .success(let stream) = result, directLogBudget > 0,
+          let direct = stream as? SangforDirectStream
+        {
+          directLogBudget -= 1
+          self?.log("direct connection to \(host):\(port) via \(direct.interfaceName)")
+        }
+        completion(result)
+      }
     }
     let plane = SangforNativeDataPlane(
       plan: plan,

@@ -30,7 +30,8 @@ public final class SangforNativeDataPlane {
 
     public var description: String {
       "egress=\(egress) routed=\(routed) terminated=\(terminated) "
-        + "unrouted=\(unrouted) ingress=\(ingress) reconnects=\(reconnects)"
+        + "direct=\(direct) unrouted=\(unrouted) ingress=\(ingress) "
+        + "reconnects=\(reconnects)"
     }
   }
 
@@ -63,6 +64,7 @@ public final class SangforNativeDataPlane {
   private var closed = false
   /// How many successful dials are still logged; failures always are.
   private var dialLogBudget = 40
+  private var flowLogBudget = 80
 
   public private(set) var statistics = Statistics()
   public private(set) var virtualAddresses: [String] = []
@@ -231,13 +233,21 @@ public final class SangforNativeDataPlane {
       },
       resolve: { [weak self] address, port, name in
         guard let self else { return nil }
+        let chosen: String?
         if let name {
-          return self.routeTable.matchTcp(destinationHost: name, port: port) != nil ? name : nil
-        }
-        guard let host = self.plan.dialHost(for: address, port: port),
+          chosen = self.routeTable.matchTcp(destinationHost: name, port: port) != nil ? name : nil
+        } else if let host = self.plan.dialHost(for: address, port: port),
           self.routeTable.matchTcp(destinationHost: host, port: port) != nil
-        else { return nil }
-        return host
+        {
+          chosen = host
+        } else {
+          chosen = nil
+        }
+        self.logFlowDecision(
+          "flow \(address):\(port) names \(name ?? "nobody") -> "
+            + (chosen.map { "tunnel as \($0)" } ?? "direct")
+        )
+        return chosen
       },
       directDialer: { [weak self] address, port, completion in
         guard let self, let direct = self.configuration.directDialer else {
@@ -245,9 +255,25 @@ public final class SangforNativeDataPlane {
           return
         }
         self.statistics.direct += 1
-        direct(address, port, completion)
+        direct(address, port) { [weak self] result in
+          switch result {
+          case .success:
+            self?.logFlowDecision("direct connection to \(address):\(port) is up")
+          case .failure(let error):
+            self?.log("direct connection to \(address):\(port) failed: \(error)")
+          }
+          completion(result)
+        }
       }
     )
+  }
+
+  /// Logs where a sniffed flow went, for the first few dozen: a busy page opens
+  /// many connections and the decision is the same each time.
+  private func logFlowDecision(_ message: String) {
+    guard flowLogBudget > 0 else { return }
+    flowLogBudget -= 1
+    log(message)
   }
 
   // MARK: - Connections

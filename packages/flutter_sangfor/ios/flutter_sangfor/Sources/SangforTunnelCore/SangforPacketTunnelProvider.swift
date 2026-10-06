@@ -509,6 +509,7 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         "egress": native.egress,
         "routed": native.routed,
         "terminated": native.terminated,
+        "direct": native.direct,
         "unrouted": native.unrouted,
         "ingress": native.ingress,
         "egressBytes": native.egressBytes,

@@ -6,8 +6,9 @@ import Network
 /// It carries the flows the tunnel was never meant to carry: the plan routes the
 /// addresses its host names resolved to, so other names and ports behind the
 /// same address end up in the tunnel too, and this puts them back on the path
-/// they would have taken without it. The extension's own connections are not
-/// routed into its tunnel, which is also what the proxy's direct path relies on.
+/// they would have taken without it. The connection refuses the tunnel's own
+/// interface (a utun is an `.other` interface), so it can never be carried back
+/// into the tunnel it is meant to go around.
 ///
 /// Everything runs on the queue it is given, the data plane's.
 public final class SangforDirectStream: SangforRelayStream {
@@ -19,6 +20,11 @@ public final class SangforDirectStream: SangforRelayStream {
   public var onData: ((Data) -> Void)?
   public var onClosed: ((Error?) -> Void)?
   public var isClosed: Bool { closed }
+
+  /// The interface the connection settled on, for logs.
+  public var interfaceName: String {
+    connection.currentPath?.availableInterfaces.first?.name ?? "unknown"
+  }
 
   private init(connection: NWConnection) {
     self.connection = connection
@@ -39,10 +45,12 @@ public final class SangforDirectStream: SangforRelayStream {
       completion(.failure(SangforTunnelError.invalidPlan("bad port \(port)")))
       return
     }
+    let parameters = NWParameters.tcp
+    parameters.prohibitedInterfaceTypes = [.other]
     let connection = NWConnection(
       host: NWEndpoint.Host(host),
       port: endpointPort,
-      using: .tcp
+      using: parameters
     )
     let stream = SangforDirectStream(connection: connection)
     var settled = false
