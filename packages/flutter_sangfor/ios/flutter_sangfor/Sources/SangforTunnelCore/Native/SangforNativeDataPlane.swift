@@ -1,10 +1,5 @@
 import Foundation
 
-/// Resolves [host] to an IPv4 address, or nil. The completion is called on the
-/// data plane's queue.
-public typealias SangforHostResolver =
-  (_ host: String, _ completion: @escaping (String?) -> Void) -> Void
-
 /// The extension-side data plane: node connections, route decisions, local TCP
 /// termination, and the inbound packet stream.
 ///
@@ -36,11 +31,6 @@ public final class SangforNativeDataPlane {
     public var connection = ATrustL3Connection.Configuration()
     /// Terminator tuning.
     public var terminator = ATrustTcpTerminator.Configuration()
-    /// Resolves a host name to an IPv4 address for a TCP tunnel dial to a
-    /// resource the gateway does not resolve itself. Optional: without one, such
-    /// a dial only works for hosts the plan already knows an address for.
-    /// The completion must be called on the plane's queue.
-    public var hostResolver: SangforHostResolver?
 
     public init() {}
   }
@@ -90,13 +80,8 @@ public final class SangforNativeDataPlane {
   public func start(completion: @escaping (Result<[String], Error>) -> Void) {
     let terminatorConfiguration = configuration.terminator
     let terminator = ATrustTcpTerminator(
-      dialer: { [weak self] host, port, resolvedAddress, dialCompletion in
-        self?.dialTcpTunnel(
-          host: host,
-          port: port,
-          resolvedIp: resolvedAddress,
-          completion: dialCompletion
-        )
+      dialer: { [weak self] host, port, dialCompletion in
+        self?.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
       },
       shouldTerminate: { [weak self] address, port in
         self?.shouldTerminate(address: address, port: port) ?? false
@@ -310,77 +295,21 @@ public final class SangforNativeDataPlane {
 
   /// Dials one TCP tunnel connection for the extension's HTTP proxy.
   ///
-  /// The proxy hands over the host name the client asked for. A resource the
-  /// gateway resolves itself (`addrPretend`) needs nothing more. One it does not
-  /// resolve needs the destination's IPv4 address in the dial request, and the
-  /// gateway closes the connection during the handshake without it: the address
-  /// comes from the plan's pre-resolved hosts, or from [Configuration.hostResolver].
+  /// The proxy hands over the host name the client asked for, which is what the
+  /// gateway authorizes: a request naming the host and carrying no `destIP` is
+  /// accepted for resources published with and without `addrPretend`.
   public func dialTcpTunnelForProxy(
     host: String,
     port: Int,
     completion: @escaping (Result<SangforRelayStream, Error>) -> Void
   ) {
-    let name = host.lowercased()
-    if SangforAddressBytes.ipv4(name) != nil {
-      dialTcpTunnel(host: name, port: port, resolvedIp: name, completion: completion)
-      return
-    }
-    guard let route = routeTable.matchTcp(destinationHost: name, port: port) else {
-      completion(
-        .failure(
-          SangforTunnelError.flowAuthFailed("no TCP tunnel resource for \(host):\(port)")
-        )
-      )
-      return
-    }
-    if route.addrPretend {
-      dialTcpTunnel(host: name, port: port, resolvedIp: nil, completion: completion)
-      return
-    }
-    if let known = knownAddress(for: name) {
-      dialTcpTunnel(host: name, port: port, resolvedIp: known, completion: completion)
-      return
-    }
-    guard let resolver = configuration.hostResolver else {
-      completion(
-        .failure(
-          SangforTunnelError.flowAuthFailed(
-            "no address known for \(name) and the gateway does not resolve it"
-          )
-        )
-      )
-      return
-    }
-    resolver(name) { [weak self] address in
-      guard let self, !self.closed else {
-        completion(.failure(SangforTunnelError.channelClosed("the tunnel is closed")))
-        return
-      }
-      guard let address, SangforAddressBytes.ipv4(address) != nil else {
-        completion(
-          .failure(SangforTunnelError.flowAuthFailed("cannot resolve \(name)"))
-        )
-        return
-      }
-      self.dialTcpTunnel(host: name, port: port, resolvedIp: address, completion: completion)
-    }
-  }
-
-  /// An IPv4 address the plan already resolved for [name], the lowest first so
-  /// the choice does not change from one dial to the next.
-  private func knownAddress(for name: String) -> String? {
-    plan.dialHosts
-      .filter { $0.value.lowercased() == name }
-      .keys
-      .sorted()
-      .first
+    dialTcpTunnel(host: host.lowercased(), port: port, completion: completion)
   }
 
   /// Dials one TCP tunnel connection for the terminator.
   private func dialTcpTunnel(
     host: String,
     port: Int,
-    resolvedIp: String?,
     completion: @escaping (Result<SangforRelayStream, Error>) -> Void
   ) {
     guard let signKey = plan.signKey else {
@@ -409,9 +338,15 @@ public final class SangforNativeDataPlane {
     }
     let dialHost = plan.dialHosts[host] ?? host
     let destination = "\(dialHost):\(port)"
-    let destinationIp: String? = route.addrPretend
-      ? nil
-      : resolvedIp.flatMap { SangforAddressBytes.ipv4($0) != nil ? $0 : nil }
+    // An address is sent only when the destination *is* an address, and the
+    // resource is one the gateway does not resolve itself. A flow to a host
+    // name carries none: the gateway authorizes the name, and refuses a request
+    // that also carries an address (closing the connection during the handshake
+    // when the "address" is a name, as the terminator used to send, or with
+    // `tcp tunnel connection not allowed` when it is the address the name
+    // resolves to here). Measured against the WHU gateway, 2026-10-06.
+    let destinationIp: String? =
+      !route.addrPretend && SangforAddressBytes.ipv4(dialHost) != nil ? dialHost : nil
     // What a failed (or one of the first successful) dials was about, so a
     // refusal can be told apart by host, address and resource flag.
     let description =

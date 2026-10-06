@@ -78,8 +78,6 @@ public final class SangforNativeTunnelRuntime {
         : "node certificates: pinned to \(plan.certificateDigests.count) digest(s)"
     )
     let scheduler = SangforDispatchScheduler(queue: queue)
-    var planeConfiguration = SangforNativeDataPlane.Configuration()
-    planeConfiguration.hostResolver = Self.systemResolver(queue: queue)
     let plane = SangforNativeDataPlane(
       plan: plan,
       scheduler: scheduler,
@@ -99,7 +97,6 @@ public final class SangforNativeTunnelRuntime {
           }
         }
       },
-      configuration: planeConfiguration,
       log: { [weak self] message in self?.log(message) }
     )
     plane.onIngressPacket = { [weak self] packet in
@@ -126,41 +123,6 @@ public final class SangforNativeTunnelRuntime {
         self.log("native data plane up: \(addresses.joined(separator: ","))")
         completion(.success(addresses))
       }
-    }
-  }
-
-  /// The system resolver, IPv4 only, for hosts the gateway does not resolve
-  /// itself. `getaddrinfo` has no timeout of its own, so the answer is given up
-  /// on after a few seconds; the completion always runs on [queue], once.
-  static func systemResolver(queue: DispatchQueue) -> SangforHostResolver {
-    return { host, completion in
-      let lock = NSLock()
-      var answered = false
-      func answer(_ address: String?) {
-        lock.lock()
-        let first = !answered
-        answered = true
-        lock.unlock()
-        if first { queue.async { completion(address) } }
-      }
-      DispatchQueue.global(qos: .userInitiated).async {
-        var hints = addrinfo()
-        hints.ai_family = AF_INET
-        hints.ai_socktype = SOCK_STREAM
-        var result: UnsafeMutablePointer<addrinfo>?
-        var address: String?
-        if getaddrinfo(host, nil, &hints, &result) == 0, let first = result {
-          var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-          first.pointee.ai_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
-            var sin = $0.pointee.sin_addr
-            _ = inet_ntop(AF_INET, &sin, &buffer, socklen_t(INET_ADDRSTRLEN))
-          }
-          address = String(cString: buffer)
-        }
-        if let result { freeaddrinfo(result) }
-        answer(address)
-      }
-      queue.asyncAfter(deadline: .now() + 6) { answer(nil) }
     }
   }
 

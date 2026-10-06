@@ -24,16 +24,18 @@
 * When the gateway assigns an interface address other than the one the tunnel
   was configured with, the extension re-applies its settings with the assigned
   one instead of leaving replies addressed to a stranger.
-* TCP tunnel dials to a resource the gateway does not resolve itself
-  (`addrPretend == false`, about a sixth of what a gateway publishes) now carry
-  the destination's IPv4 address, and the gateway no longer closes the
-  connection during the handshake. The terminator used to send the *host name*
-  as `destIP`, and the extension's proxy sent nothing. The terminator's dialer
-  is now given the address the client connected to; the proxy takes the address
-  from the plan's pre-resolved hosts, or resolves the name on demand
-  (`SangforNativeDataPlane.Configuration.hostResolver`, set to the system
-  resolver by the extension). A resource the gateway resolves itself still gets
-  no address.
+* A TCP tunnel dial to a host known by name no longer carries a `destIP`. The
+  terminator sent the *host name* as `destIP` when the resource was published
+  without `addrPretend`, and the gateway closed the connection during the
+  handshake; that is what broke `datarepo.whu.edu.cn`-style hosts (100 of the 772
+  routes on the WHU gateway). Probed against the live gateway: a request naming
+  the host with no `destIP` is accepted for resources with and without
+  `addrPretend`, while any `destIP` is refused (`tcp tunnel connection not
+  allowed` for the address the name resolves to). A flow to a bare address, with
+  no name behind it, still carries that address when the resource is not
+  `addrPretend`.
+* Failed tunnel dials, and the first forty successful ones, log the destination,
+  the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified
   because the gateway advertised no pins).
 

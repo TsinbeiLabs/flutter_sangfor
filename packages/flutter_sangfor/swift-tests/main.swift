@@ -773,11 +773,9 @@ do {
   let scheduler = VirtualScheduler()
   var relay: FakeRelayStream?
   var dialed: [String] = []
-  var resolvedAddresses: [String] = []
   let terminator = ATrustTcpTerminator(
-    dialer: { host, port, resolvedAddress, completion in
+    dialer: { host, port, completion in
       dialed.append("\(host):\(port)")
-      resolvedAddresses.append(resolvedAddress)
       let stream = FakeRelayStream()
       relay = stream
       completion(.success(stream))
@@ -809,7 +807,6 @@ do {
   )
   check(terminator.accept(syn), "a SYN for a TCP-tunnel resource is claimed")
   checkEqual(dialed, ["10.9.1.2:443"], "the terminator dials the destination")
-  checkEqual(resolvedAddresses, ["10.9.1.2"], "the dialer is told the address the client connected to")
   checkEqual(emitted.count, 1, "one SYN-ACK is emitted")
   if let synAck = segments(emitted).first {
     check(synAck.flags & ATrustTcpFlag.syn != 0, "the reply is a SYN")
@@ -902,7 +899,7 @@ do {
   let scheduler2 = VirtualScheduler()
   var relay2: FakeRelayStream?
   let terminator2 = ATrustTcpTerminator(
-    dialer: { _, _, _, completion in
+    dialer: { _, _, completion in
       let stream = FakeRelayStream()
       relay2 = stream
       completion(.success(stream))
@@ -934,7 +931,7 @@ do {
   let scheduler3 = VirtualScheduler()
   var errors: [Error] = []
   let terminator3 = ATrustTcpTerminator(
-    dialer: { _, _, _, completion in
+    dialer: { _, _, completion in
       completion(.failure(SangforTunnelError.flowAuthFailed("denied")))
     },
     shouldTerminate: { _, _ in true },
@@ -1627,12 +1624,9 @@ func destinationRoute(_ host: String, pretend: Bool) -> ATrustRoute {
 /// handshake. Returns the plane and the channels it dials, in order.
 func startedPlane(
   routes: [ATrustRoute],
-  dialHosts: [String: String],
-  resolver: SangforHostResolver? = nil
+  dialHosts: [String: String]
 ) -> (SangforNativeDataPlane, () -> [FakeChannel]) {
   var channels: [FakeChannel] = []
-  var configuration = SangforNativeDataPlane.Configuration()
-  configuration.hostResolver = resolver
   let plan = ATrustSessionPlan(
     sid: "s", deviceId: "d", connectionId: "c", username: "u",
     signKeyBase64: Data(signKey).base64EncodedString(),
@@ -1647,7 +1641,6 @@ func startedPlane(
       channels.append(channel)
       completion(.success(channel))
     },
-    configuration: configuration,
     log: { _ in }
   )
   plane.start { _ in }
@@ -1660,110 +1653,71 @@ func sentText(_ channel: FakeChannel) -> String {
 }
 
 do {
-  // A flow the terminator relays: the gateway is given the address the client
-  // connected to, never the host name it was published under.
-  let (plane, channels) = startedPlane(
-    routes: [destinationRoute("needs.example.test", pretend: false)],
-    dialHosts: ["198.51.100.4": "needs.example.test"]
-  )
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn, destination: "198.51.100.4"))
-  checkEqual(channels().count, 2, "a terminated flow dials the TCP tunnel")
-  let text = sentText(channels()[1])
-  check(text.contains("\"destIP\":\"198.51.100.4\""), "the gateway is given the destination address")
-  check(!text.contains("\"destIP\":\"needs.example.test\""), "and not the host name as an address")
-  check(text.contains("needs.example.test:443"), "the destination is still named")
-}
-
-do {
-  // A resource the gateway resolves itself gets no address.
-  let (plane, channels) = startedPlane(
-    routes: [destinationRoute("named.example.test", pretend: true)],
-    dialHosts: ["198.51.100.5": "named.example.test"]
-  )
-  plane.handleEgressPacket(
-    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn, destination: "198.51.100.5"))
-  check(!sentText(channels()[1]).contains("destIP"), "a pretend resource is dialed by name alone")
-}
-
-do {
-  var resolverCalls: [String] = []
-  let resolver: SangforHostResolver = { host, completion in
-    resolverCalls.append(host)
-    completion(host == "late.example.test" ? "198.51.100.9" : nil)
+  // A flow to a host the plan knows by name is dialed by that name and carries
+  // no address, whether or not the gateway resolves the resource itself. The
+  // gateway refused every request that had one: "not allowed" for the address a
+  // name resolves to, a closed handshake for the host name sent as an address.
+  for pretend in [false, true] {
+    let (plane, channels) = startedPlane(
+      routes: [destinationRoute("named.example.test", pretend: pretend)],
+      dialHosts: ["198.51.100.4": "named.example.test"]
+    )
+    plane.handleEgressPacket(
+      try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn, destination: "198.51.100.4"))
+    checkEqual(channels().count, 2, "a terminated flow dials the TCP tunnel (pretend=\(pretend))")
+    let text = sentText(channels()[1])
+    check(!text.contains("destIP"), "a flow to a named host carries no address (pretend=\(pretend))")
+    check(text.contains("named.example.test:443"), "and names the host (pretend=\(pretend))")
   }
-  let (plane, channels) = startedPlane(
-    routes: [
-      destinationRoute("needs.example.test", pretend: false),
-      destinationRoute("named.example.test", pretend: true),
-      destinationRoute("late.example.test", pretend: false),
-      destinationRoute("ghost.example.test", pretend: false),
-    ],
-    dialHosts: ["198.51.100.4": "needs.example.test"],
-    resolver: resolver
-  )
-
-  // Known from the plan: no lookup.
-  plane.dialTcpTunnelForProxy(host: "Needs.Example.Test", port: 443) { _ in }
-  var text = sentText(channels()[1])
-  check(text.contains("\"destIP\":\"198.51.100.4\""), "the proxy uses the address the plan already knows")
-  check(resolverCalls.isEmpty, "and does not resolve it again")
-
-  // A resource the gateway resolves: no address, no lookup.
-  plane.dialTcpTunnelForProxy(host: "named.example.test", port: 443) { _ in }
-  text = sentText(channels()[2])
-  check(!text.contains("destIP"), "the proxy dials a pretend resource by name alone")
-  check(resolverCalls.isEmpty, "without a lookup")
-
-  // Unknown to the plan: resolved on demand.
-  plane.dialTcpTunnelForProxy(host: "late.example.test", port: 443) { _ in }
-  text = sentText(channels()[3])
-  check(text.contains("\"destIP\":\"198.51.100.9\""), "an unknown host is resolved and its address sent")
-  checkEqual(resolverCalls, ["late.example.test"], "through the resolver, once")
-
-  // Cannot be resolved: the dial fails instead of sending an unusable request.
-  var failure: Result<SangforRelayStream, Error>?
-  let before = channels().count
-  plane.dialTcpTunnelForProxy(host: "ghost.example.test", port: 443) { failure = $0 }
-  if case .failure? = failure { check(true, "an unresolvable host fails the dial") }
-  else { check(false, "an unresolvable host fails the dial") }
-  checkEqual(channels().count, before, "and opens no connection")
-
-  // An address literal is the address.
-  plane.dialTcpTunnelForProxy(host: "198.51.100.4", port: 443) { _ in }
-  // (no route covers the literal as an address: it is refused)
 }
 
 do {
-  // No resolver at all: a host the plan does not know cannot be dialed.
+  // A flow to an address the plan has no name for is a flow to that address.
   let (plane, channels) = startedPlane(
-    routes: [destinationRoute("late.example.test", pretend: false)],
+    routes: [destinationRoute("198.51.100.0/24", pretend: false)],
     dialHosts: [:]
   )
-  var failure: Result<SangforRelayStream, Error>?
-  plane.dialTcpTunnelForProxy(host: "late.example.test", port: 443) { failure = $0 }
-  if case .failure? = failure { check(true, "without a resolver an unknown host fails the dial") }
-  else { check(false, "without a resolver an unknown host fails the dial") }
-  checkEqual(channels().count, 1, "and opens no TCP tunnel connection")
+  plane.handleEgressPacket(
+    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn, destination: "198.51.100.7"))
+  let text = sentText(channels()[1])
+  check(text.contains("\"destIP\":\"198.51.100.7\""), "an address destination carries that address")
+  check(text.contains("198.51.100.7:443"), "and is named by it")
+
+  let (pretendPlane, pretendChannels) = startedPlane(
+    routes: [destinationRoute("198.51.100.0/24", pretend: true)],
+    dialHosts: [:]
+  )
+  pretendPlane.handleEgressPacket(
+    try clientPacket(sequence: 1, acknowledgment: 0, flags: ATrustTcpFlag.syn, destination: "198.51.100.7"))
+  check(!sentText(pretendChannels()[1]).contains("destIP"), "a resource the gateway resolves itself gets none")
+}
+
+do {
+  // The proxy dials by the host name the client asked for, with no address.
+  let (plane, channels) = startedPlane(
+    routes: [
+      destinationRoute("named.example.test", pretend: true),
+      destinationRoute("other.example.test", pretend: false),
+    ],
+    dialHosts: ["198.51.100.4": "other.example.test"]
+  )
+  var dialed: Result<SangforRelayStream, Error>?
+  plane.dialTcpTunnelForProxy(host: "Named.Example.Test", port: 443) { dialed = $0 }
+  var text = sentText(channels()[1])
+  check(!text.contains("destIP"), "a proxy dial of a pretend resource carries no address")
+  check(text.contains("named.example.test:443"), "and names the host, lower-cased")
+  channels()[1].deliver(Data(bytesFromHex(string(["tcpTunnel", "serverResponseHex"]))))
+  if case .success? = dialed { check(true, "the proxy dial completes") }
+  else { check(false, "the proxy dial completes") }
+
+  plane.dialTcpTunnelForProxy(host: "other.example.test", port: 443) { _ in }
+  text = sentText(channels()[2])
+  check(!text.contains("destIP"), "nor does one of a resource the gateway does not resolve")
 
   var refused: Result<SangforRelayStream, Error>?
   plane.dialTcpTunnelForProxy(host: "nowhere.example.test", port: 443) { refused = $0 }
   if case .failure? = refused { check(true, "a host no resource covers is refused") }
   else { check(false, "a host no resource covers is refused") }
-}
-
-do {
-  // The proxy dial completes once the gateway answers.
-  let (plane, channels) = startedPlane(
-    routes: [destinationRoute("named.example.test", pretend: true)],
-    dialHosts: [:]
-  )
-  var dialed: Result<SangforRelayStream, Error>?
-  plane.dialTcpTunnelForProxy(host: "named.example.test", port: 443) { dialed = $0 }
-  check(sentText(channels()[1]).contains("named.example.test:443"), "a proxy dial names the host it was asked for")
-  channels()[1].deliver(Data(bytesFromHex(string(["tcpTunnel", "serverResponseHex"]))))
-  if case .success? = dialed { check(true, "the proxy dial completes") }
-  else { check(false, "the proxy dial completes") }
 }
 
 // MARK: - Summary
