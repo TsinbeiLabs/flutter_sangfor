@@ -20,7 +20,8 @@
   plan's new `tunnelSettings` key, or fails with error 200 and a reason.
 * The plan's `tunnelSettings.excludedRoutes` are applied as
   `NEIPv4Settings.excludedRoutes`, together with the gateway nodes' addresses,
-  so the CAS server and the tunnel's own transport can never enter the tunnel.
+  so the destinations the app lists (the VPN gateway) and the tunnel's own
+  transport can never enter the tunnel.
 * When the gateway assigns an interface address other than the one the tunnel
   was configured with, the extension re-applies its settings with the assigned
   one instead of leaving replies addressed to a stranger.
@@ -50,6 +51,10 @@
   unpublished is carried by the tunnel, and an address no name resolved to is
   still dropped. The plan's optional `dialHostAliases` lists every name behind an
   address so a flow is matched to the name that covers its port.
+* Connections carried outside the tunnel refuse the tunnel's own interface (a
+  utun is an `.other` interface), so they cannot be routed back into it. Each
+  sniffed flow's decision and the first direct connections (with the interface
+  they used) are logged, and `direct` joins the data plane statistics.
 * Failed tunnel dials, and the first forty successful ones, log the destination,
   the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified

@@ -39,15 +39,8 @@ public final class ATrustTcpTerminator {
     public init() {}
   }
 
-  /// Opens the upstream for one terminated flow. [host] is the name to dial
-  /// (the name the plan has for the destination address, when it has one);
-  /// [address] is the IPv4 address the client actually connected to, which a
-  /// dialer that goes out directly needs.
   public typealias Dialer =
-    (
-      _ host: String, _ port: Int, _ address: String,
-      _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void
-    ) -> Void
+    (_ host: String, _ port: Int, _ completion: @escaping (Result<SangforRelayStream, Error>) -> Void) -> Void
   public typealias TerminationFilter = (_ destinationAddress: String, _ destinationPort: Int) -> Bool
   public typealias DialHostResolver = (_ destinationAddress: String, _ destinationPort: Int) -> String?
 
@@ -447,7 +440,7 @@ final class TerminatedConnection {
     let host = explicitHost
       ?? terminator.resolveDialHost?(serverAddress, serverPort)
       ?? serverAddress
-    terminator.dial(host, serverPort, serverAddress) { [weak self] result in
+    terminator.dial(host, serverPort) { [weak self] result in
       self?.upstreamOpened(result)
     }
   }

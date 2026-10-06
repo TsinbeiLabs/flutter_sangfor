@@ -9,8 +9,8 @@ public struct SangforDomainRoutingConfiguration: Codable, Equatable {
   /// The user's custom entries, with the app's defaults already expanded. The
   /// extension never holds a default list of its own.
   public var customEntries: [String]
-  /// Hosts that must keep the user's own source address (the CAS server, the
-  /// VPN gateway itself). Matched exactly, like the app's `neverTunneledHosts`.
+  /// Hosts that must keep the user's own source address (the app lists the VPN
+  /// gateway itself). Matched exactly, like the app's `neverTunneledHosts`.
   public var neverTunnelHosts: [String]
   /// Whether the extension should publish its HTTP proxy to the system.
   public var proxyEnabled: Bool
@@ -80,18 +80,6 @@ public struct SangforRouteMatcher {
       return matchesAddress(normalized, port: port)
     }
     return matchesDomain(normalized, port: port)
-  }
-
-  /// The route the TCP tunnel dial should use, or nil when there is none.
-  /// Prefers resources that do not prefer L3 and falls back to those that do,
-  /// as the Android proxy's `dialTcp(includeL3Preferred: true)` does.
-  public func tunnelRoute(host: String, port: Int) -> ATrustRoute? {
-    let normalized = host.trimmingCharacters(in: .whitespaces).lowercased()
-    return ATrustRouteTable(routes: serverRoutes).matchTcp(
-      destinationHost: normalized,
-      port: port,
-      includeL3Preferred: true
-    )
   }
 
   private func matchesAddress(_ address: String, port: Int) -> Bool {
@@ -250,8 +238,8 @@ public struct SangforPlanTunnelSettings: Codable, Equatable {
   public var address: String?
   public var prefixLength: Int
   public var routes: [String]
-  /// Destinations that must never enter the tunnel (the CAS server, the VPN
-  /// gateway). They win over `routes`.
+  /// Destinations that must never enter the tunnel (the VPN gateway). They win
+  /// over `routes`.
   public var excludedRoutes: [String]
   public var dnsServers: [String]
   public var searchDomains: [String]

@@ -3,7 +3,6 @@ import Foundation
 /// Why a proxy request was not accepted. Each maps to one canned response.
 public enum SangforProxyFailure: Equatable {
   case badRequest
-  case proxyAuthenticationRequired
 }
 
 /// One parsed proxy request.
@@ -34,16 +33,8 @@ public struct SangforHttpProxyParser {
   public static let maximumHeaderBytes = 64 * 1024
 
   private var buffer = Data()
-  private let expectedAuthorization: String?
 
-  /// [credential] is `user:password`; nil turns authentication off.
-  public init(credential: String?) {
-    if let credential {
-      expectedAuthorization = "Basic " + Data(credential.utf8).base64EncodedString()
-    } else {
-      expectedAuthorization = nil
-    }
-  }
+  public init() {}
 
   public mutating func feed(_ chunk: Data) -> SangforProxyParseResult {
     buffer.append(chunk)
@@ -65,18 +56,6 @@ public struct SangforHttpProxyParser {
     let target = String(requestLine[1])
     let version = String(requestLine[2])
     guard version.hasPrefix("HTTP/") else { return .failure(.badRequest) }
-
-    if let expectedAuthorization {
-      let supplied = lines.dropFirst().first { line in
-        line.lowercased().hasPrefix("proxy-authorization:")
-      }.map { line in
-        String(line[line.index(after: line.firstIndex(of: ":")!)...])
-          .trimmingCharacters(in: .whitespaces)
-      }
-      guard let supplied, Self.constantTimeEqual(supplied, expectedAuthorization) else {
-        return .failure(.proxyAuthenticationRequired)
-      }
-    }
 
     if method == "CONNECT" {
       guard let (host, port) = Self.parseAuthority(target, defaultPort: 443) else {
@@ -174,17 +153,6 @@ public struct SangforHttpProxyParser {
     return (host.lowercased(), port)
   }
 
-  private static func constantTimeEqual(_ lhs: String, _ rhs: String) -> Bool {
-    let a = Array(lhs.utf8)
-    let b = Array(rhs.utf8)
-    var difference = a.count ^ b.count
-    for index in 0..<max(a.count, b.count) {
-      let x: UInt8 = index < a.count ? a[index] : 0
-      let y: UInt8 = index < b.count ? b[index] : 0
-      difference |= Int(x ^ y)
-    }
-    return difference == 0
-  }
 }
 
 /// The few responses the proxy writes itself.
@@ -194,11 +162,6 @@ public enum SangforHttpProxyResponses {
   public static let forbidden = response("403 Forbidden", close: true)
   public static let badGateway = response("502 Bad Gateway", close: true)
   public static let serviceUnavailable = response("503 Service Unavailable", close: true)
-  public static let proxyAuthenticationRequired = Data(
-    ("HTTP/1.1 407 Proxy Authentication Required\r\n"
-      + "Proxy-Authenticate: Basic realm=\"Luotopia\"\r\n"
-      + "content-length: 0\r\nconnection: close\r\n\r\n").utf8
-  )
 
   private static func response(_ status: String, close: Bool = false) -> Data {
     var text = "HTTP/1.1 \(status)\r\n"

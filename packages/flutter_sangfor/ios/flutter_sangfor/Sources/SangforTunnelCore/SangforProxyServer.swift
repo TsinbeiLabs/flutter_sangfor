@@ -36,7 +36,6 @@ public final class SangforProxyServer {
   static let lowWater = 64 * 1024
 
   private let policy: SangforProxyPolicy
-  private let credential: String?
   private let queue: DispatchQueue
   private let tunnelDialer: TunnelDialer
   private let log: (String) -> Void
@@ -47,16 +46,13 @@ public final class SangforProxyServer {
 
   public private(set) var statistics = Statistics()
 
-  /// [credential] is `user:password`; nil turns authentication off.
   public init(
     policy: SangforProxyPolicy,
-    credential: String?,
     queue: DispatchQueue,
     tunnelDialer: @escaping TunnelDialer,
     log: @escaping (String) -> Void
   ) {
     self.policy = policy
-    self.credential = credential
     self.queue = queue
     self.tunnelDialer = tunnelDialer
     self.log = log
@@ -159,7 +155,6 @@ public final class SangforProxyServer {
     tunnelDialer(host, port, completion)
   }
 
-  fileprivate func credentialValue() -> String? { credential }
   fileprivate var serverQueue: DispatchQueue { queue }
 
   fileprivate func record(_ change: (inout Statistics) -> Void) {
@@ -187,7 +182,7 @@ private final class ProxySession {
   init(server: SangforProxyServer, client: NWConnection) {
     self.server = server
     self.client = client
-    parser = SangforHttpProxyParser(credential: server.credentialValue())
+    parser = SangforHttpProxyParser()
   }
 
   func start() {
@@ -237,9 +232,6 @@ private final class ProxySession {
         self.receiveHeader()
       case .failure(.badRequest):
         self.respondAndClose(SangforHttpProxyResponses.badRequest)
-      case .failure(.proxyAuthenticationRequired):
-        self.server.record { $0.rejected += 1 }
-        self.respondAndClose(SangforHttpProxyResponses.proxyAuthenticationRequired)
       case .request(let request, let leftover):
         self.handle(request, leftover: leftover)
       }
@@ -309,10 +301,14 @@ private final class ProxySession {
       completion(.failure(SangforProxyServer.ProxyError.noPort))
       return
     }
+    // A utun is an `.other` interface: refuse it, so a direct connection can
+    // never be carried back into the tunnel it is meant to go around.
+    let parameters = NWParameters.tcp
+    parameters.prohibitedInterfaceTypes = [.other]
     let connection = NWConnection(
       host: NWEndpoint.Host(host),
       port: endpointPort,
-      using: .tcp
+      using: parameters
     )
     var settled = false
     let timeout = DispatchWorkItem { [weak connection] in

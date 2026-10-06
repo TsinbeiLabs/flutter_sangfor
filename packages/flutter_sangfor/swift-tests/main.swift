@@ -774,7 +774,7 @@ do {
   var relay: FakeRelayStream?
   var dialed: [String] = []
   let terminator = ATrustTcpTerminator(
-    dialer: { host, port, address, completion in
+    dialer: { host, port, completion in
       dialed.append("\(host):\(port)")
       let stream = FakeRelayStream()
       relay = stream
@@ -899,7 +899,7 @@ do {
   let scheduler2 = VirtualScheduler()
   var relay2: FakeRelayStream?
   let terminator2 = ATrustTcpTerminator(
-    dialer: { _, _, _, completion in
+    dialer: { _, _, completion in
       let stream = FakeRelayStream()
       relay2 = stream
       completion(.success(stream))
@@ -931,7 +931,7 @@ do {
   let scheduler3 = VirtualScheduler()
   var errors: [Error] = []
   let terminator3 = ATrustTcpTerminator(
-    dialer: { _, _, _, completion in
+    dialer: { _, _, completion in
       completion(.failure(SangforTunnelError.flowAuthFailed("denied")))
     },
     shouldTerminate: { _, _ in true },
@@ -1508,8 +1508,8 @@ do {
 // MARK: - HTTP proxy parser
 
 do {
-  func feed(_ text: String, credential: String? = nil) -> SangforProxyParseResult {
-    var parser = SangforHttpProxyParser(credential: credential)
+  func feed(_ text: String) -> SangforProxyParseResult {
+    var parser = SangforHttpProxyParser()
     return parser.feed(Data(text.utf8))
   }
 
@@ -1563,7 +1563,7 @@ do {
   }
 
   // Headers arrive in pieces.
-  var split = SangforHttpProxyParser(credential: nil)
+  var split = SangforHttpProxyParser()
   checkEqual(split.feed(Data("CONNECT a.cn:4".utf8)), .needMore, "an incomplete line waits")
   checkEqual(split.feed(Data("43 HTTP/1.1\r\nHost".utf8)), .needMore, "an incomplete header block waits")
   if case .request(.connect(_, let port), _) = split.feed(Data(": a.cn\r\n\r\n".utf8)) {
@@ -1579,31 +1579,13 @@ do {
   checkEqual(feed("CONNECT a.cn:99999 HTTP/1.1\r\n\r\n"), .failure(.badRequest), "a port above 65535 is refused")
   checkEqual(feed("GET ftp://a.cn/ HTTP/1.1\r\n\r\n"), .failure(.badRequest), "other schemes are refused")
 
-  var oversized = SangforHttpProxyParser(credential: nil)
+  var oversized = SangforHttpProxyParser()
   checkEqual(
     oversized.feed(Data(repeating: 0x41, count: SangforHttpProxyParser.maximumHeaderBytes + 1)),
     .failure(.badRequest),
     "an oversized header block is refused"
   )
 
-  let good = "Basic " + Data("luotopia:secret".utf8).base64EncodedString()
-  if case .request(.connect, _) = feed(
-    "CONNECT a.cn:443 HTTP/1.1\r\nProxy-Authorization: \(good)\r\n\r\n", credential: "luotopia:secret")
-  {
-    check(true, "the right credential is accepted")
-  } else {
-    check(false, "the right credential is accepted")
-  }
-  checkEqual(
-    feed("CONNECT a.cn:443 HTTP/1.1\r\n\r\n", credential: "luotopia:secret"),
-    .failure(.proxyAuthenticationRequired),
-    "a missing credential gets a 407"
-  )
-  checkEqual(
-    feed("CONNECT a.cn:443 HTTP/1.1\r\nProxy-Authorization: Basic AAAA\r\n\r\n", credential: "luotopia:secret"),
-    .failure(.proxyAuthenticationRequired),
-    "a wrong credential gets a 407"
-  )
   check(
     String(data: SangforHttpProxyResponses.connectionEstablished, encoding: .utf8)
       == "HTTP/1.1 200 Connection established\r\n\r\n",

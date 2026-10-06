@@ -220,9 +220,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     startOptions: [String: NSObject],
     completionHandler: @escaping (Error?) -> Void
   ) {
-    // Never-tunnel destinations (the CAS server, the VPN gateway) and the
-    // gateway's own nodes stay out of the tunnel whatever the routes cover; the
-    // tunnel's transport must not be routed back into itself.
+    // Never-tunnel destinations (the VPN gateway) and the gateway's own nodes
+    // stay out of the tunnel whatever the routes cover; the tunnel's transport
+    // must not be routed back into itself.
     var excluded: [SangforIPv4.Route] = []
     if configuration.runtimeMode == .extensionNative {
       excluded = SangforIPv4.parseRoutes(plan?.tunnelSettings?.excludedRoutes ?? [])
@@ -297,8 +297,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         // The extension's own proxy: apps that honor the system proxy send their
         // campus traffic here by host name, so domains the routing table cannot
         // express (wildcards, names that resolve to other addresses) still reach
-        // the tunnel. Only the matching domains are sent; the user's own
-        // addresses, like the CAS server, are exceptions.
+        // the tunnel. Only the matching domains are sent; hosts that must keep
+        // the user's own address (the VPN gateway) are exceptions.
         let proxySettings = NEProxySettings()
         // No credential: the system does not attach one on its own, it asks the
         // user for it instead. The proxy is limited by what it will serve, not
@@ -587,7 +587,6 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     )
     let server = SangforProxyServer(
       policy: policy,
-      credential: nil,
       queue: queue,
       tunnelDialer: { [weak self] host, port, done in
         guard let runtime = self?.nativeRuntime else {

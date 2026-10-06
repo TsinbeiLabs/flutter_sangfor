@@ -96,7 +96,7 @@ public final class SangforNativeDataPlane {
   public func start(completion: @escaping (Result<[String], Error>) -> Void) {
     let terminatorConfiguration = configuration.terminator
     let terminator = ATrustTcpTerminator(
-      dialer: { [weak self] host, port, _, dialCompletion in
+      dialer: { [weak self] host, port, dialCompletion in
         self?.dialTcpTunnel(host: host, port: port, completion: dialCompletion)
       },
       shouldTerminate: { [weak self] address, port in
