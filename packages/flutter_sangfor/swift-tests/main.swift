@@ -1936,6 +1936,110 @@ do {
              "an address no name resolved to has none")
 }
 
+// MARK: - A session the gateway has dropped
+
+do {
+  func plan(keep: Bool?) -> ATrustSessionPlan {
+    ATrustSessionPlan(
+      sid: "s", deviceId: "d", connectionId: "c", username: "u", signKeyBase64: "AA==",
+      lang: "zh-CN", processName: "p", processPath: "/p", processPlatform: "iOS",
+      nodes: ["g": ["203.0.113.9:441"]], majorNodeGroup: "g", routes: [], dnsServers: [],
+      keepOnUserStop: keep)
+  }
+  checkEqual(try ATrustSessionPlan.decode(plan(keep: true).encoded()).keepOnUserStop, true,
+             "a plan can ask to be kept across a stop the user made")
+  checkEqual(try ATrustSessionPlan.decode(plan(keep: nil).encoded()).keepOnUserStop, nil as Bool?,
+             "a plan without the key keeps the old behaviour")
+}
+
+/// The bytes a gateway answers an L3 handshake with when it refuses the session:
+/// the method acknowledgement, then an auth header with a non-zero status.
+let refusedHandshake: [UInt8] = [0x05, 0xD0, 0x53, 0x01, 0x00, 0x00]
+
+do {
+  let scheduler = VirtualScheduler()
+  let channel = FakeChannel()
+  var result: Result<[String], Error>?
+  let connection = ATrustL3Connection(
+    channel: channel, plan: makePlan(signKey: signKey), scheduler: scheduler)
+  connection.start { result = $0 }
+  channel.deliver(refusedHandshake)
+  if case .failure(let error) = result {
+    check((error as? SangforTunnelError)?.isFatalForSession ?? false,
+          "a refused handshake means the session is gone, not that the network failed")
+  } else {
+    check(false, "a refused handshake fails the start")
+  }
+}
+
+do {
+  // A tunnel that was up, whose gateway then refuses every new handshake: the
+  // first refusal is retried (a node can be busy), the second in a row is fatal
+  // and the plane stops reconnecting instead of retrying forever.
+  let scheduler = VirtualScheduler()
+  var channels: [FakeChannel] = []
+  var fatal: [Error] = []
+  let plane = SangforNativeDataPlane(
+    plan: makePlan(signKey: signKey),
+    scheduler: scheduler,
+    dialer: { _, _, completion in
+      let channel = FakeChannel()
+      channels.append(channel)
+      completion(.success(channel))
+    },
+    configuration: SangforNativeDataPlane.Configuration(),
+    log: { _ in }
+  )
+  plane.onFatalError = { fatal.append($0) }
+  plane.start { _ in }
+  channels[0].deliver(Data(bytesFromHex(string(["l3", "handshakeResponseHex"]))))
+  checkEqual(channels.count, 1, "the tunnel comes up on one connection")
+
+  channels[0].onClosed?(nil)
+  scheduler.advance(5)
+  checkEqual(channels.count, 2, "a dropped connection is redialed")
+  channels[1].deliver(refusedHandshake)
+  check(fatal.isEmpty, "one refused handshake is not yet fatal")
+  scheduler.advance(5)
+  checkEqual(channels.count, 3, "and is retried")
+  channels[2].deliver(refusedHandshake)
+  checkEqual(fatal.count, 1, "the second refusal in a row is reported as fatal")
+  scheduler.advance(30)
+  checkEqual(channels.count, 3, "and nothing reconnects after that")
+}
+
+do {
+  // A refusal on the very first attempt belongs to whoever started the tunnel:
+  // it is returned to them, not reported as fatal, and nothing keeps retrying.
+  let scheduler = VirtualScheduler()
+  var channels: [FakeChannel] = []
+  var started: Result<[String], Error>?
+  var fatal = 0
+  let plane = SangforNativeDataPlane(
+    plan: makePlan(signKey: signKey),
+    scheduler: scheduler,
+    dialer: { _, _, completion in
+      let channel = FakeChannel()
+      channels.append(channel)
+      completion(.success(channel))
+    },
+    configuration: SangforNativeDataPlane.Configuration(),
+    log: { _ in }
+  )
+  plane.onFatalError = { _ in fatal += 1 }
+  plane.start { started = $0 }
+  channels[0].deliver(refusedHandshake)
+  if case .failure(let error) = started {
+    check((error as? SangforTunnelError)?.isFatalForSession ?? false,
+          "starting with a dead session fails with a session error")
+  } else {
+    check(false, "starting with a dead session fails")
+  }
+  scheduler.advance(30)
+  checkEqual(channels.count, 1, "a failed start does not keep redialing")
+  checkEqual(fatal, 0, "and is not reported through the fatal callback")
+}
+
 // MARK: - Summary
 
 if failures > 0 {

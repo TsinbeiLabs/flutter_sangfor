@@ -60,6 +60,9 @@ public final class SangforNativeDataPlane {
   private var connections: [String: ATrustL3Connection] = [:]
   private var connecting: [String: Bool] = [:]
   private var reconnectTasks: [String: SangforScheduledTask] = [:]
+  /// Consecutive handshakes the gateway refused, per node group. One refusal can
+  /// be a busy node; the second in a row means the session is gone.
+  private var refusedHandshakes: [String: Int] = [:]
   private var terminator: ATrustTcpTerminator?
   private var closed = false
   /// How many successful dials are still logged; failures always are.
@@ -339,10 +342,12 @@ public final class SangforNativeDataPlane {
         connection.onError = { [weak self] error in
           guard let self else { return }
           self.log("tunnel error: \(error)")
-          if self.connections[nodeGroupId] === connection {
-            self.connections.removeValue(forKey: nodeGroupId)
-          }
           connection.close()
+          // A connection that never finished its handshake is not in
+          // `connections`: its failure is reported once, through `start`'s
+          // completion below, which also decides whether to retry.
+          guard self.connections[nodeGroupId] === connection else { return }
+          self.connections.removeValue(forKey: nodeGroupId)
           if (error as? SangforTunnelError)?.isFatalForSession ?? false {
             self.onFatalError?(error)
             return
@@ -354,9 +359,26 @@ public final class SangforNativeDataPlane {
           switch result {
           case .failure(let error):
             connection.close()
+            if (error as? SangforTunnelError)?.isFatalForSession ?? false {
+              let refused = (self.refusedHandshakes[nodeGroupId] ?? 0) + 1
+              self.refusedHandshakes[nodeGroupId] = refused
+              // The first attempt, the one starting the tunnel, reports it to its
+              // caller; a reconnect has no caller, so the second refusal in a row
+              // is reported as fatal and the reconnecting stops.
+              if completion == nil && refused >= 2 {
+                self.log("the gateway refused the session twice: \(error)")
+                self.onFatalError?(error)
+                return
+              }
+              if completion != nil {
+                completion?(.failure(error))
+                return
+              }
+            }
             self.scheduleReconnect(nodeGroupId)
             completion?(.failure(error))
           case .success(let addresses):
+            self.refusedHandshakes[nodeGroupId] = nil
             self.connections[nodeGroupId] = connection
             if !addresses.isEmpty {
               self.virtualAddresses = addresses

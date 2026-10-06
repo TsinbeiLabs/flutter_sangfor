@@ -322,10 +322,18 @@ public final class ATrustL3Connection {
           completion(.success(addresses))
         }
       } catch {
-        self.fail(error)
+        // A gateway that answers the handshake with a refusal has dropped the
+        // session; any other failure here is the transport misbehaving.
+        let failure: Error = (error as? SangforProtocolError).flatMap { protocolError in
+          if case .invalidStatus = protocolError {
+            return SangforTunnelError.tunnelAuthFailed("\(protocolError)")
+          }
+          return nil
+        } ?? error
+        self.fail(failure)
         if !finished {
           finished = true
-          completion(.failure(error))
+          completion(.failure(failure))
         }
       }
     }

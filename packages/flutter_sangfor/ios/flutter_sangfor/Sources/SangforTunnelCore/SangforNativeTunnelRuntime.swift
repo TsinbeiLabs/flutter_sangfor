@@ -19,6 +19,10 @@ public final class SangforNativeTunnelRuntime {
   /// the interface was configured with. Runs on the runtime's queue.
   public var onVirtualAddressChange: (([String]) -> Void)?
 
+  /// Called when the gateway has dropped the session and reconnecting cannot
+  /// help: the user has to log in again. Runs on the runtime's queue.
+  public var onFatalError: ((Error) -> Void)?
+
   private var plane: SangforNativeDataPlane?
   private var readLoopRunning = false
   private var statsTask: DispatchWorkItem?
@@ -121,6 +125,7 @@ public final class SangforNativeTunnelRuntime {
     }
     plane.onFatalError = { [weak self] error in
       self?.log("fatal tunnel error: \(error)")
+      self?.onFatalError?(error)
     }
     plane.onVirtualIP = { [weak self] addresses in
       self?.log("virtual IP updated: \(addresses.joined(separator: ","))")

@@ -402,6 +402,9 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     runtime.onVirtualAddressChange = { [weak self] addresses in
       self?.reapplyAddress(addresses)
     }
+    runtime.onFatalError = { [weak self] error in
+      self?.sessionLost(error)
+    }
     runtime.start { [weak self] result in
       guard let self else {
         completionHandler(nil)
@@ -411,7 +414,11 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
       case .failure(let error):
         SangforLog.providerError("native data plane failed: \(error)")
         self.nativeRuntime = nil
-        completionHandler(error)
+        if (error as? SangforTunnelError)?.isFatalForSession ?? false {
+          completionHandler(Self.sessionRejectedError)
+        } else {
+          completionHandler(error)
+        }
       case .success(let addresses):
         // The interface was configured with the address the app queried from
         // the gateway; the handshake is the authority. A reply addressed to
@@ -419,6 +426,26 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         self.reapplyAddress(addresses, completion: completionHandler)
       }
     }
+  }
+
+  private static let sessionRejectedError = NSError(
+    domain: errorDomain,
+    code: SettingsError.sessionRejected.rawValue,
+    userInfo: [
+      NSLocalizedDescriptionKey:
+        "The VPN session is no longer valid. Open the app and connect again."
+    ]
+  )
+
+  /// The gateway dropped the session while the tunnel was up. The plan holds a
+  /// credential that no longer works, so it goes, and the tunnel is cancelled
+  /// with a reason instead of staying "connected" and carrying nothing.
+  private func sessionLost(_ error: Error) {
+    SangforLog.providerError("the session is gone, stopping the tunnel: \(error)")
+    SangforSharedContainer.removeSessionPlan(
+      appGroupIdentifier: resolvedAppGroupIdentifier(options: [:])
+    )
+    cancelTunnelWithError(Self.sessionRejectedError)
   }
 
   /// Re-applies the tunnel settings when the gateway assigned an address other
@@ -491,11 +518,19 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     // really going away, but keep it across a transient stop: iOS restarts the
     // provider after a network change or a reboot, and the extension has to
     // come back up on its own — the Runner may not be running at all.
+    //
+    // A stop the user asked for is the exception the plan can opt out of: the
+    // VPN switched off in Settings is switched on again from there, and that
+    // start has nothing else to run from. The app clears the plan itself when it
+    // disconnects.
+    let appGroup = resolvedAppGroupIdentifier(options: [:])
+    let keepAfterUserStop =
+      Self.readSessionPlan(appGroupIdentifier: appGroup)?.keepOnUserStop ?? false
     switch reason {
+    case .userInitiated where keepAfterUserStop:
+      SangforLog.provider("keeping the session plan so Settings can switch the VPN on again")
     case .userInitiated, .providerDisabled, .appUpdate:
-      SangforSharedContainer.removeSessionPlan(
-        appGroupIdentifier: resolvedAppGroupIdentifier(options: [:])
-      )
+      SangforSharedContainer.removeSessionPlan(appGroupIdentifier: appGroup)
     default:
       SangforLog.provider("keeping the session plan for a tunnel restart")
     }
@@ -507,6 +542,7 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     case invalidPrefixLength = 1
     case invalidAddress = 2
     case noConfiguration = 200
+    case sessionRejected = 201
   }
 
   /// Answers control messages from the Runner (via

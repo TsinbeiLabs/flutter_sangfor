@@ -51,6 +51,22 @@
   unpublished is carried by the tunnel, and an address no name resolved to is
   still dropped. The plan's optional `dialHostAliases` lists every name behind an
   address so a flow is matched to the name that covers its port.
+* Switching the VPN off in Settings and on again works. A stop the user made
+  wiped the session plan, so the start that followed (which arrives with no
+  options and can only run from the plan) found nothing and failed with "no
+  tunnel settings in the session plan". A plan may now carry `keepOnUserStop`:
+  the extension then keeps it across a user stop. The app still clears it itself
+  when it disconnects, and `providerDisabled` / `appUpdate` still wipe it.
+* A session the gateway has dropped is now reported as one. A refused L3
+  handshake (`status` or `code` not zero) was an ordinary protocol error, so an
+  extension whose session had expired reconnected every five seconds forever
+  while the system showed it as connected. It is now `tunnelAuthFailed`: a start
+  that hits it fails with "The VPN session is no longer valid" (error 201); on
+  a reconnect the first refusal is retried (a node can be busy) and the second in
+  a row stops the tunnel, wipes the plan and cancels with the same error. An
+  error on a connection that never finished its handshake is now reported once,
+  through its start completion, instead of also through the connection's error
+  callback.
 * Connections carried outside the tunnel refuse the tunnel's own interface (a
   utun is an `.other` interface), so they cannot be routed back into it. Each
   sniffed flow's decision and the first direct connections (with the interface

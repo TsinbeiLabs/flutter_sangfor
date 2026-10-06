@@ -53,6 +53,11 @@ public struct ATrustSessionPlan: Codable, Equatable {
   /// published on its own ports; this lets a flow be matched by port. Optional:
   /// without it [dialHosts] is all there is.
   public let dialHostAliases: [String: [String]]?
+  /// Keep the plan when the tunnel is stopped by the user from outside the app
+  /// (the VPN switched off in Settings), so the same session can be switched on
+  /// again from there. Without it the plan is wiped on a user stop, as before.
+  /// The app still clears it explicitly when it disconnects on its own.
+  public let keepOnUserStop: Bool?
 
   public init(
     schemaVersion: Int = ATrustSessionPlan.currentSchemaVersion,
@@ -77,7 +82,8 @@ public struct ATrustSessionPlan: Codable, Equatable {
     mtu: Int = 1400,
     domainRouting: SangforDomainRoutingConfiguration? = nil,
     tunnelSettings: SangforPlanTunnelSettings? = nil,
-    dialHostAliases: [String: [String]]? = nil
+    dialHostAliases: [String: [String]]? = nil,
+    keepOnUserStop: Bool? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.sid = sid
@@ -102,6 +108,7 @@ public struct ATrustSessionPlan: Codable, Equatable {
     self.domainRouting = domainRouting
     self.tunnelSettings = tunnelSettings
     self.dialHostAliases = dialHostAliases
+    self.keepOnUserStop = keepOnUserStop
   }
 
   /// The host name to dial for a flow to [address]:[port]: the first name behind
