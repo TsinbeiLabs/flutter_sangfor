@@ -81,6 +81,15 @@ public final class SangforDirectStream: SangforRelayStream {
           timeoutWork.cancel()
           completion(.failure(error))
         }
+      case .waiting(let error):
+        // A refused or unreachable destination does not come back by waiting
+        // (the framework would hold the connection until the path changes), so
+        // report it now instead of after the whole timeout.
+        guard !settled, SangforDirectStream.isPermanent(error) else { return }
+        settled = true
+        timeoutWork.cancel()
+        stream.handleFailure(error)
+        completion(.failure(error))
       case .cancelled:
         stream.handleFailure(nil)
         if !settled {
@@ -93,6 +102,11 @@ public final class SangforDirectStream: SangforRelayStream {
       }
     }
     connection.start(queue: queue)
+  }
+
+  private static func isPermanent(_ error: NWError) -> Bool {
+    guard case .posix(let code) = error else { return false }
+    return code == .ECONNREFUSED || code == .EHOSTUNREACH || code == .ENETUNREACH
   }
 
   public func send(_ data: Data) {

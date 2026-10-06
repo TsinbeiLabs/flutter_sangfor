@@ -32,10 +32,11 @@ if [[ ! -f "$matcher_cases" ]]; then
 fi
 "$out" "$fixtures" "$matcher_cases"
 
-# The direct stream is a Network.framework connection, so it has its own binary:
+# The direct stream and the proxy server are Network.framework code, so they have their own binary:
 # it needs a real loopback listener and is not part of the portable sources.
-direct_out="${TMPDIR:-/tmp}/sangfor_direct_stream_tests"
-"$swiftc" -O -o "$direct_out" "${sources[@]}" \
+network_out="${TMPDIR:-/tmp}/sangfor_network_tests"
+"$swiftc" -O -o "$network_out" "${sources[@]}" \
   ios/flutter_sangfor/Sources/SangforTunnelCore/SangforDirectStream.swift \
-  swift-tests/direct-stream/main.swift
-"$direct_out"
+  ios/flutter_sangfor/Sources/SangforTunnelCore/SangforProxyServer.swift \
+  swift-tests/network/main.swift
+"$network_out"

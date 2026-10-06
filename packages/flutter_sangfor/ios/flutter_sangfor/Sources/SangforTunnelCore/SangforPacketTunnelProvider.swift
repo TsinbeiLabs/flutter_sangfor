@@ -220,109 +220,16 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     startOptions: [String: NSObject],
     completionHandler: @escaping (Error?) -> Void
   ) {
-    // Never-tunnel destinations (the VPN gateway) and the gateway's own nodes
-    // stay out of the tunnel whatever the routes cover; the tunnel's transport
-    // must not be routed back into itself.
-    var excluded: [SangforIPv4.Route] = []
-    if configuration.runtimeMode == .extensionNative {
-      excluded = SangforIPv4.parseRoutes(plan?.tunnelSettings?.excludedRoutes ?? [])
-      for endpoints in (plan?.nodes ?? [:]).values {
-        for endpoint in endpoints {
-          if let node = ATrustNodeEndpoint(endpoint),
-            SangforIPv4.isValidIPv4Address(node.host)
-          {
-            excluded.append(
-              SangforIPv4.Route(destinationAddress: node.host, prefixLength: 32)
-            )
-          }
-        }
-      }
-    }
-    let excludedRoutes = excluded
+    let excluded = Self.excludedRoutes(configuration: configuration, plan: plan)
     let makeSettings: (String) -> NEPacketTunnelNetworkSettings = { address in
-      let settings = NEPacketTunnelNetworkSettings(
-        tunnelRemoteAddress: address
+      Self.networkSettings(
+        address: address,
+        configuration: configuration,
+        parsedRoutes: parsedRoutes,
+        subnetMask: subnetMask,
+        excludedRoutes: excluded,
+        preparedProxy: preparedProxy
       )
-      let ipv4 = NEIPv4Settings(
-        addresses: [address],
-        subnetMasks: [subnetMask]
-      )
-      ipv4.includedRoutes = parsedRoutes.map { route in
-        NEIPv4Route(
-          destinationAddress: route.destinationAddress,
-          subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
-        )
-      }
-      if !excludedRoutes.isEmpty {
-        ipv4.excludedRoutes = excludedRoutes.map { route in
-          NEIPv4Route(
-            destinationAddress: route.destinationAddress,
-            subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
-          )
-        }
-      }
-      settings.ipv4Settings = ipv4
-      if !configuration.dnsServers.isEmpty {
-        let dns = NEDNSSettings(servers: configuration.dnsServers)
-        dns.searchDomains = configuration.searchDomains.isEmpty
-          ? nil
-          : configuration.searchDomains
-        settings.dnsSettings = dns
-      }
-      if configuration.runtimeMode == .loopbackBridge,
-        let proxy = configuration.proxyEndpoint
-      {
-        // Advertise the caller's loopback HTTP proxy as the system proxy for
-        // the tunnel's lifetime. Gateways commonly publish resources as
-        // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
-        // clients (CFNetwork/NSURLSession) then reach them through the caller's
-        // proxy instead of being dropped as unrouted. An empty match-domain
-        // matches every host name, so all HTTP(S) traffic is proxied.
-        //
-        // The native data plane terminates those flows itself, so it must not
-        // advertise a proxy that only exists while the Runner is awake.
-        let proxySettings = NEProxySettings()
-        let server = NEProxyServer(address: proxy.host, port: proxy.port)
-        proxySettings.httpEnabled = true
-        proxySettings.httpServer = server
-        proxySettings.httpsEnabled = true
-        proxySettings.httpsServer = server
-        proxySettings.matchDomains = [""]
-        settings.proxySettings = proxySettings
-        SangforLog.network(
-          "system proxy advertised at \(proxy.host):\(proxy.port)"
-        )
-      }
-      if let preparedProxy {
-        // The extension's own proxy: apps that honor the system proxy send their
-        // campus traffic here by host name, so domains the routing table cannot
-        // express (wildcards, names that resolve to other addresses) still reach
-        // the tunnel. Only the matching domains are sent; hosts that must keep
-        // the user's own address (the VPN gateway) are exceptions.
-        let proxySettings = NEProxySettings()
-        // No credential: the system does not attach one on its own, it asks the
-        // user for it instead. The proxy is limited by what it will serve, not
-        // by who asks (see `SangforProxyPolicy`).
-        let server = NEProxyServer(address: "127.0.0.1", port: Int(preparedProxy.port))
-        proxySettings.httpEnabled = true
-        proxySettings.httpServer = server
-        proxySettings.httpsEnabled = true
-        proxySettings.httpsServer = server
-        proxySettings.matchDomains = preparedProxy.matchDomains
-        proxySettings.exceptionList = preparedProxy.exceptionList
-        proxySettings.excludeSimpleHostnames = true
-        settings.proxySettings = proxySettings
-        SangforLog.network(
-          "extension proxy at 127.0.0.1:\(preparedProxy.port) for "
-            + "\(preparedProxy.matchDomains.count) domain suffix(es)"
-        )
-      }
-      if let mtu = configuration.mtu, mtu > 0 {
-        settings.mtu = mtu as NSNumber
-      }
-      // IPv4-only MVP: a documented limitation. IPv6 packets are dropped
-      // with a counter instead of being mislabeled as IPv4.
-      return settings
     }
     settingsFactory = makeSettings
     appliedAddress = configuration.address
@@ -359,6 +266,128 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   /// Runs the tunnel from inside this extension: the session plan the Runner
   /// left in the App Group container is enough to bring the tunnel up, so the
   /// VPN keeps working after iOS suspends the app.
+  /// Never-tunnel destinations (the VPN gateway) and the gateway's own nodes stay
+  /// out of the tunnel whatever the routes cover; the tunnel's transport must not
+  /// be routed back into itself.
+  private static func excludedRoutes(
+    configuration: SangforTunnelConfiguration,
+    plan: ATrustSessionPlan?
+  ) -> [SangforIPv4.Route] {
+    guard configuration.runtimeMode == .extensionNative else { return [] }
+    var excluded = SangforIPv4.parseRoutes(plan?.tunnelSettings?.excludedRoutes ?? [])
+    for endpoints in (plan?.nodes ?? [:]).values {
+      for endpoint in endpoints {
+        if let node = ATrustNodeEndpoint(endpoint),
+          SangforIPv4.isValidIPv4Address(node.host)
+        {
+          excluded.append(SangforIPv4.Route(destinationAddress: node.host, prefixLength: 32))
+        }
+      }
+    }
+    return excluded
+  }
+
+  private static func neRoutes(_ routes: [SangforIPv4.Route]) -> [NEIPv4Route] {
+    routes.map { route in
+      NEIPv4Route(
+        destinationAddress: route.destinationAddress,
+        subnetMask: SangforIPv4.mask(forPrefixLength: route.prefixLength)!
+      )
+    }
+  }
+
+  /// The tunnel's network settings for [address]. A function of the address so
+  /// they can be rebuilt when the gateway assigns a different one.
+  private static func networkSettings(
+    address: String,
+    configuration: SangforTunnelConfiguration,
+    parsedRoutes: [SangforIPv4.Route],
+    subnetMask: String,
+    excludedRoutes: [SangforIPv4.Route],
+    preparedProxy: PreparedProxy?
+  ) -> NEPacketTunnelNetworkSettings {
+    let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: address)
+    let ipv4 = NEIPv4Settings(addresses: [address], subnetMasks: [subnetMask])
+    ipv4.includedRoutes = neRoutes(parsedRoutes)
+    if !excludedRoutes.isEmpty {
+      ipv4.excludedRoutes = neRoutes(excludedRoutes)
+    }
+    settings.ipv4Settings = ipv4
+    if !configuration.dnsServers.isEmpty {
+      let dns = NEDNSSettings(servers: configuration.dnsServers)
+      dns.searchDomains = configuration.searchDomains.isEmpty
+        ? nil
+        : configuration.searchDomains
+      settings.dnsSettings = dns
+    }
+    if configuration.runtimeMode == .loopbackBridge,
+      let proxy = configuration.proxyEndpoint
+    {
+      // Advertise the caller's loopback HTTP proxy as the system proxy for the
+      // tunnel's lifetime. Gateways commonly publish resources as
+      // TCP-tunnel-only, which the raw packet flow cannot carry; proxy-aware
+      // clients (CFNetwork/NSURLSession) then reach them through the caller's
+      // proxy instead of being dropped as unrouted. An empty match-domain
+      // matches every host name, so all HTTP(S) traffic is proxied.
+      //
+      // The native data plane terminates those flows itself, so it must not
+      // advertise a proxy that only exists while the Runner is awake.
+      settings.proxySettings = proxySettings(
+        host: proxy.host,
+        port: proxy.port,
+        matchDomains: [""]
+      )
+      SangforLog.network("system proxy advertised at \(proxy.host):\(proxy.port)")
+    }
+    if let preparedProxy {
+      // The extension's own proxy: apps that honor the system proxy send their
+      // campus traffic here by host name, so domains the routing table cannot
+      // express (wildcards, names that resolve to other addresses) still reach
+      // the tunnel. Only the matching domains are sent; hosts that must keep the
+      // user's own address (the VPN gateway) are exceptions.
+      //
+      // No credential: the system does not attach one on its own, it asks the
+      // user for it instead. The proxy is limited by what it will serve, not by
+      // who asks (see `SangforProxyPolicy`).
+      settings.proxySettings = proxySettings(
+        host: "127.0.0.1",
+        port: Int(preparedProxy.port),
+        matchDomains: preparedProxy.matchDomains,
+        exceptionList: preparedProxy.exceptionList,
+        excludeSimpleHostnames: true
+      )
+      SangforLog.network(
+        "extension proxy at 127.0.0.1:\(preparedProxy.port) for "
+          + "\(preparedProxy.matchDomains.count) domain suffix(es)"
+      )
+    }
+    if let mtu = configuration.mtu, mtu > 0 {
+      settings.mtu = mtu as NSNumber
+    }
+    // IPv4-only MVP: a documented limitation. IPv6 packets are dropped with a
+    // counter instead of being mislabeled as IPv4.
+    return settings
+  }
+
+  private static func proxySettings(
+    host: String,
+    port: Int,
+    matchDomains: [String],
+    exceptionList: [String]? = nil,
+    excludeSimpleHostnames: Bool = false
+  ) -> NEProxySettings {
+    let proxySettings = NEProxySettings()
+    let server = NEProxyServer(address: host, port: port)
+    proxySettings.httpEnabled = true
+    proxySettings.httpServer = server
+    proxySettings.httpsEnabled = true
+    proxySettings.httpsServer = server
+    proxySettings.matchDomains = matchDomains
+    proxySettings.exceptionList = exceptionList
+    proxySettings.excludeSimpleHostnames = excludeSimpleHostnames
+    return proxySettings
+  }
+
   private func startNativeDataPlane(
     appGroupIdentifier: String?,
     completionHandler: @escaping (Error?) -> Void

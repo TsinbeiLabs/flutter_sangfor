@@ -55,6 +55,12 @@
   utun is an `.other` interface), so they cannot be routed back into it. Each
   sniffed flow's decision and the first direct connections (with the interface
   they used) are logged, and `direct` joins the data plane statistics.
+* The proxy's direct connections now go through `SangforDirectStream` like the
+  terminator's, instead of a second hand-written `NWConnection` relay, so there
+  is one direct path to reason about. A direct dial that is refused or has no
+  route fails at once (the framework would otherwise sit in `waiting` until the
+  timeout). `swift-tests/network` exercises both against real loopback sockets,
+  including the proxy's direct, tunnel, refused and malformed-request paths.
 * Failed tunnel dials, and the first forty successful ones, log the destination,
   the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified

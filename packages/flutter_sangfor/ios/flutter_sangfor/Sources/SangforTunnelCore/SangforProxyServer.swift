@@ -30,7 +30,6 @@ public final class SangforProxyServer {
 
   static let maximumSessions = 256
   static let idleTimeout: Double = 120
-  static let directDialTimeout: Double = 15
   /// Bytes allowed to wait for the client before upstream reads are paused.
   static let highWater = 256 * 1024
   static let lowWater = 64 * 1024
@@ -39,6 +38,7 @@ public final class SangforProxyServer {
   private let queue: DispatchQueue
   private let tunnelDialer: TunnelDialer
   private let log: (String) -> Void
+  fileprivate let directDialTimeout: Double
 
   private var listener: NWListener?
   private var sessions: [ObjectIdentifier: ProxySession] = [:]
@@ -50,12 +50,14 @@ public final class SangforProxyServer {
     policy: SangforProxyPolicy,
     queue: DispatchQueue,
     tunnelDialer: @escaping TunnelDialer,
-    log: @escaping (String) -> Void
+    log: @escaping (String) -> Void,
+    directDialTimeout: Double = 15
   ) {
     self.policy = policy
     self.queue = queue
     self.tunnelDialer = tunnelDialer
     self.log = log
+    self.directDialTimeout = directDialTimeout
   }
 
   /// Binds a loopback port chosen by the system and reports it once ready.
@@ -108,7 +110,7 @@ public final class SangforProxyServer {
     sessions.removeAll()
   }
 
-  enum ProxyError: Error { case noPort, dialFailed }
+  enum ProxyError: Error { case noPort }
 
   // MARK: - Sessions
 
@@ -147,12 +149,28 @@ public final class SangforProxyServer {
     return decision
   }
 
-  fileprivate func dialTunnel(
+  /// Opens the upstream for a decided destination: through the tunnel, or
+  /// straight out of the extension.
+  fileprivate func dialUpstream(
+    _ decision: SangforProxyDecision,
     host: String,
     port: Int,
     completion: @escaping (Result<SangforRelayStream, Error>) -> Void
   ) {
-    tunnelDialer(host, port, completion)
+    switch decision {
+    case .tunnel:
+      tunnelDialer(host, port, completion)
+    case .direct:
+      SangforDirectStream.dial(
+        host: host,
+        port: port,
+        queue: queue,
+        timeout: directDialTimeout,
+        completion: completion
+      )
+    case .reject:
+      completion(.failure(ProxyError.noPort))
+    }
   }
 
   fileprivate var serverQueue: DispatchQueue { queue }
@@ -167,16 +185,12 @@ private final class ProxySession {
   private let client: NWConnection
   private var parser: SangforHttpProxyParser
 
-  private var upstreamStream: SangforRelayStream?
-  private var upstreamConnection: NWConnection?
+  private var upstream: SangforRelayStream?
   private var idleTask: DispatchWorkItem?
-  private var dialTimeout: DispatchWorkItem?
   private var closed = false
   private var closeWhenFlushed = false
   private var pendingToClient = 0
-  private var pendingToUpstream = 0
   private var upstreamPaused = false
-  private var clientPaused = false
   private var lastActivity = DispatchTime.now()
 
   init(server: SangforProxyServer, client: NWConnection) {
@@ -203,14 +217,10 @@ private final class ProxySession {
     guard !closed else { return }
     closed = true
     idleTask?.cancel()
-    dialTimeout?.cancel()
-    upstreamStream?.onData = nil
-    upstreamStream?.onClosed = nil
-    upstreamStream?.close()
-    upstreamStream = nil
-    upstreamConnection?.stateUpdateHandler = nil
-    upstreamConnection?.cancel()
-    upstreamConnection = nil
+    upstream?.onData = nil
+    upstream?.onClosed = nil
+    upstream?.close()
+    upstream = nil
     client.stateUpdateHandler = nil
     client.cancel()
     server.remove(self)
@@ -249,39 +259,28 @@ private final class ProxySession {
       host = requestedHost
       port = requestedPort
     }
-    switch server.decide(host: host, port: port) {
+    let decision = server.decide(host: host, port: port)
+    switch decision {
     case .reject:
       server.record { $0.rejected += 1 }
       respondAndClose(SangforHttpProxyResponses.forbidden)
+      return
     case .tunnel:
       server.record { $0.tunneled += 1 }
-      server.dialTunnel(host: host, port: port) { [weak self] result in
-        guard let self, !self.closed else {
-          if case .success(let stream) = result { stream.close() }
-          return
-        }
-        switch result {
-        case .failure(let error):
-          self.dialFailed(host: host, port: port, error: error)
-        case .success(let stream):
-          self.upstreamStream = stream
-          self.established(request, leftover: leftover)
-        }
-      }
     case .direct:
       server.record { $0.direct += 1 }
-      dialDirect(host: host, port: port) { [weak self] result in
-        guard let self, !self.closed else {
-          if case .success(let connection) = result { connection.cancel() }
-          return
-        }
-        switch result {
-        case .failure(let error):
-          self.dialFailed(host: host, port: port, error: error)
-        case .success(let connection):
-          self.upstreamConnection = connection
-          self.established(request, leftover: leftover)
-        }
+    }
+    server.dialUpstream(decision, host: host, port: port) { [weak self] result in
+      guard let self, !self.closed else {
+        if case .success(let stream) = result { stream.close() }
+        return
+      }
+      switch result {
+      case .failure(let error):
+        self.dialFailed(host: host, port: port, error: error)
+      case .success(let stream):
+        self.upstream = stream
+        self.established(request, leftover: leftover)
       }
     }
   }
@@ -292,64 +291,9 @@ private final class ProxySession {
     respondAndClose(SangforHttpProxyResponses.badGateway)
   }
 
-  private func dialDirect(
-    host: String,
-    port: Int,
-    completion: @escaping (Result<NWConnection, Error>) -> Void
-  ) {
-    guard let endpointPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
-      completion(.failure(SangforProxyServer.ProxyError.noPort))
-      return
-    }
-    // A utun is an `.other` interface: refuse it, so a direct connection can
-    // never be carried back into the tunnel it is meant to go around.
-    let parameters = NWParameters.tcp
-    parameters.prohibitedInterfaceTypes = [.other]
-    let connection = NWConnection(
-      host: NWEndpoint.Host(host),
-      port: endpointPort,
-      using: parameters
-    )
-    var settled = false
-    let timeout = DispatchWorkItem { [weak connection] in
-      guard !settled else { return }
-      settled = true
-      connection?.stateUpdateHandler = nil
-      connection?.cancel()
-      completion(.failure(SangforProxyServer.ProxyError.dialFailed))
-    }
-    dialTimeout = timeout
-    server.serverQueue.asyncAfter(
-      deadline: .now() + SangforProxyServer.directDialTimeout,
-      execute: timeout
-    )
-    connection.stateUpdateHandler = { state in
-      guard !settled else { return }
-      switch state {
-      case .ready:
-        settled = true
-        timeout.cancel()
-        completion(.success(connection))
-      case .failed(let error):
-        settled = true
-        timeout.cancel()
-        connection.cancel()
-        completion(.failure(error))
-      case .cancelled:
-        settled = true
-        timeout.cancel()
-        completion(.failure(SangforProxyServer.ProxyError.dialFailed))
-      default:
-        break
-      }
-    }
-    connection.start(queue: server.serverQueue)
-  }
-
   // MARK: Relay
 
   private func established(_ request: SangforProxyRequest, leftover: Data) {
-    dialTimeout?.cancel()
     switch request {
     case .connect:
       sendToClient(SangforHttpProxyResponses.connectionEstablished)
@@ -358,7 +302,12 @@ private final class ProxySession {
       sendUpstream(head)
       if !body.isEmpty { sendUpstream(body) }
     }
-    attachUpstreamReader()
+    upstream?.onData = { [weak self] data in
+      self?.relayToClient(data)
+    }
+    upstream?.onClosed = { [weak self] _ in
+      self?.upstreamEnded()
+    }
     receiveFromClient()
   }
 
@@ -375,66 +324,12 @@ private final class ProxySession {
         self.close()
         return
       }
-      // A direct upstream that is slower than the client holds the next read
-      // back; tunnel streams buffer on their own.
-      if self.pendingToUpstream > SangforProxyServer.highWater {
-        self.clientPaused = true
-      } else {
-        self.receiveFromClient()
-      }
+      self.receiveFromClient()
     }
   }
 
   private func sendUpstream(_ data: Data) {
-    if let stream = upstreamStream {
-      stream.send(data)
-    } else if let connection = upstreamConnection {
-      pendingToUpstream += data.count
-      connection.send(content: data, completion: .contentProcessed { [weak self] error in
-        guard let self, !self.closed else { return }
-        self.pendingToUpstream -= data.count
-        if error != nil {
-          self.close()
-          return
-        }
-        if self.clientPaused, self.pendingToUpstream < SangforProxyServer.lowWater {
-          self.clientPaused = false
-          self.receiveFromClient()
-        }
-      })
-    }
-  }
-
-  private func attachUpstreamReader() {
-    if let stream = upstreamStream {
-      stream.onData = { [weak self] data in
-        self?.relayToClient(data)
-      }
-      stream.onClosed = { [weak self] _ in
-        self?.upstreamEnded()
-      }
-    } else if let connection = upstreamConnection {
-      receiveFromDirectUpstream(connection)
-    }
-  }
-
-  private func receiveFromDirectUpstream(_ connection: NWConnection) {
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
-      [weak self] data, _, isComplete, error in
-      guard let self, !self.closed else { return }
-      if let data, !data.isEmpty {
-        self.relayToClient(data)
-      }
-      if error != nil || isComplete {
-        self.upstreamEnded()
-        return
-      }
-      if self.pendingToClient > SangforProxyServer.highWater {
-        self.upstreamPaused = true
-      } else {
-        self.receiveFromDirectUpstream(connection)
-      }
-    }
+    upstream?.send(data)
   }
 
   private func relayToClient(_ data: Data) {
@@ -443,7 +338,7 @@ private final class ProxySession {
     sendToClient(data)
     if pendingToClient > SangforProxyServer.highWater, !upstreamPaused {
       upstreamPaused = true
-      upstreamStream?.setReadsPaused(true)
+      upstream?.setReadsPaused(true)
     }
   }
 
@@ -462,11 +357,7 @@ private final class ProxySession {
       }
       if self.upstreamPaused, self.pendingToClient < SangforProxyServer.lowWater {
         self.upstreamPaused = false
-        if let stream = self.upstreamStream {
-          stream.setReadsPaused(false)
-        } else if let connection = self.upstreamConnection {
-          self.receiveFromDirectUpstream(connection)
-        }
+        self.upstream?.setReadsPaused(false)
       }
     })
   }
