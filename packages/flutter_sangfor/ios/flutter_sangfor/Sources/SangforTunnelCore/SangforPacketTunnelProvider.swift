@@ -53,6 +53,12 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
   private var settingsFactory: ((String) -> NEPacketTunnelNetworkSettings)?
   private var appliedAddress: String?
 
+  /// What the app shows for a tunnel it did not start in this process (one that
+  /// outlived it, or that Settings switched on): who is signed in and with which
+  /// DNS servers. Reported through `handleAppMessage`; nothing secret.
+  private var sessionUsername: String?
+  private var sessionDnsServers: [String] = []
+
   /// The HTTP proxy published to the system while the native data plane runs.
   private var proxyServer: SangforProxyServer?
   private var proxyStatsTask: DispatchWorkItem?
@@ -233,6 +239,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     }
     settingsFactory = makeSettings
     appliedAddress = configuration.address
+    sessionUsername = plan?.username
+    sessionDnsServers = configuration.dnsServers
 
     setTunnelNetworkSettings(makeSettings(configuration.address)) { [weak self] error in
       if let error {
@@ -508,6 +516,8 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     bridge = nil
     settingsFactory = nil
     appliedAddress = nil
+    sessionUsername = nil
+    sessionDnsServers = []
     proxyStatsTask?.cancel()
     proxyStatsTask = nil
     proxyServer?.stop()
@@ -520,16 +530,17 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     // come back up on its own — the Runner may not be running at all.
     //
     // A stop the user asked for is the exception the plan can opt out of: the
-    // VPN switched off in Settings is switched on again from there, and that
-    // start has nothing else to run from. The app clears the plan itself when it
-    // disconnects.
+    // VPN switched off (in Settings, or by the app) is switched on again from
+    // Settings, and that start has nothing else to run from. An app that sets
+    // the key owns the plan's lifetime and removes it when the session must not
+    // be used again.
     let appGroup = resolvedAppGroupIdentifier(options: [:])
     let keepAfterUserStop =
       Self.readSessionPlan(appGroupIdentifier: appGroup)?.keepOnUserStop ?? false
     switch reason {
     case .userInitiated where keepAfterUserStop:
       SangforLog.provider("keeping the session plan so Settings can switch the VPN on again")
-    case .userInitiated, .providerDisabled, .appUpdate:
+    case .userInitiated, .providerDisabled, .configurationRemoved, .appUpdate:
       SangforSharedContainer.removeSessionPlan(appGroupIdentifier: appGroup)
     default:
       SangforLog.provider("keeping the session plan for a tunnel restart")
@@ -582,6 +593,14 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
         "reconnects": native.reconnects,
       ]
     }
+    // Enough for the app to show a tunnel it found running.
+    let session: [String: Any] = queue.sync {
+      var summary: [String: Any] = ["dnsServers": sessionDnsServers]
+      if let appliedAddress { summary["address"] = appliedAddress }
+      if let sessionUsername { summary["username"] = sessionUsername }
+      return summary
+    }
+    payload["session"] = session
     if let proxy = queue.sync(execute: { proxyServer?.statistics }) {
       payload["proxy"] = [
         "sessions": proxy.sessions,
@@ -908,6 +927,11 @@ open class SangforPacketTunnelProvider: NEPacketTunnelProvider {
     case .authenticationCanceled: "authenticationCanceled"
     case .configurationFailed: "configurationFailed"
     case .idleTimeout: "idleTimeout"
+    case .configurationDisabled: "configurationDisabled"
+    case .configurationRemoved: "configurationRemoved"
+    case .superceded: "superceded"
+    case .userLogout: "userLogout"
+    case .userSwitch: "userSwitch"
     case .connectionFailed: "connectionFailed"
     case .appUpdate: "appUpdate"
     default: "reason(\(reason.rawValue))"

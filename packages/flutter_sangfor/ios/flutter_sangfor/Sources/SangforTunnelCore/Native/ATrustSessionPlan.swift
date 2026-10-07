@@ -56,7 +56,8 @@ public struct ATrustSessionPlan: Codable, Equatable {
   /// Keep the plan when the tunnel is stopped by the user from outside the app
   /// (the VPN switched off in Settings), so the same session can be switched on
   /// again from there. Without it the plan is wiped on a user stop, as before.
-  /// The app still clears it explicitly when it disconnects on its own.
+  /// The app that sets it owns the plan from then on, and removes it when the
+  /// session must not be started again (signing out, switching accounts).
   public let keepOnUserStop: Bool?
 
   public init(

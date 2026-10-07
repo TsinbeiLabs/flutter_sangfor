@@ -950,9 +950,74 @@ do {
   )
   checkEqual(terminator3.connectionCount, 0, "the failed connection is gone")
 
-  // Packets the terminator does not own are left for the tunnel.
+  // A segment of a flow the terminator does not hold -- one opened before the
+  // tunnel was restarted -- is reset, so the client reconnects instead of
+  // retransmitting into nothing.
+  emitted3.removeAll()
+  check(
+    terminator3.accept(
+      try clientPacket(
+        sequence: 7000,
+        acknowledgment: 4242,
+        flags: ATrustTcpFlag.ack,
+        payload: [1, 2, 3]
+      )
+    ),
+    "a data packet for an unknown flow is claimed"
+  )
+  let orphanReset = segments(emitted3).last
+  check(
+    (orphanReset?.flags ?? 0) & ATrustTcpFlag.rst != 0,
+    "an unknown flow is answered with a reset"
+  )
+  checkEqual(orphanReset?.sequenceNumber, 4242, "the reset takes the sequence the client acknowledged")
+  checkEqual(orphanReset?.sourcePort, 443, "the reset comes from the server's port")
+  checkEqual(orphanReset?.destinationPort, 51000, "the reset goes to the client's port")
+  checkEqual(terminator3.connectionCount, 0, "a reset opens no connection")
+
+  // Without an acknowledgment there is no sequence to borrow: the reset
+  // acknowledges what the segment occupied.
+  emitted3.removeAll()
+  _ = terminator3.accept(
+    try clientPacket(
+      sequence: 9000,
+      acknowledgment: 0,
+      flags: ATrustTcpFlag.fin,
+      payload: [1, 2]
+    )
+  )
+  let bareReset = segments(emitted3).last
+  checkEqual(
+    (bareReset?.flags ?? 0) & (ATrustTcpFlag.rst | ATrustTcpFlag.ack),
+    ATrustTcpFlag.rst | ATrustTcpFlag.ack,
+    "a segment without an acknowledgment gets RST|ACK"
+  )
+  checkEqual(bareReset?.sequenceNumber, 0, "that reset starts at zero")
+  checkEqual(bareReset?.acknowledgmentNumber, 9003, "and acknowledges the payload and the FIN")
+
+  // A reset is never answered with a reset.
+  emitted3.removeAll()
   check(
     !terminator3.accept(
+      try clientPacket(sequence: 1, acknowledgment: 1, flags: ATrustTcpFlag.rst)
+    ),
+    "a reset for an unknown flow is not claimed"
+  )
+  check(emitted3.isEmpty, "and nothing is sent back")
+
+  // Packets to a destination the terminator does not serve are left for the
+  // tunnel.
+  let terminator4 = ATrustTcpTerminator(
+    dialer: { _, _, completion in
+      completion(.failure(SangforTunnelError.flowAuthFailed("denied")))
+    },
+    shouldTerminate: { _, _ in false },
+    scheduler: VirtualScheduler()
+  )
+  var emitted4: [Data] = []
+  terminator4.onPacket = { emitted4.append($0) }
+  check(
+    !terminator4.accept(
       try clientPacket(
         sequence: 1,
         acknowledgment: 1,
@@ -960,8 +1025,9 @@ do {
         payload: [1, 2, 3]
       )
     ),
-    "a data packet for an unknown flow is not claimed"
+    "a data packet to a destination that is not terminated is not claimed"
   )
+  check(emitted4.isEmpty, "and is not reset")
 }
 
 // MARK: - L3 connection

@@ -177,6 +177,35 @@ public final class SangforTunnelManager {
     }
   }
 
+  /// Loads the existing manager for this provider without creating one, and
+  /// reports the tunnel's status (`.invalid` when no configuration is saved).
+  ///
+  /// This is how an app finds a tunnel it did not start in this process: one
+  /// that outlived the app, or that the user switched on from Settings. Unlike
+  /// [install] it never saves a configuration, so it never raises the system's
+  /// VPN permission prompt and is safe to call at launch.
+  public func load(completion: @escaping (NEVPNStatus) -> Void) {
+    NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
+      guard let self else {
+        completion(.invalid)
+        return
+      }
+      if error == nil {
+        // A configuration the user removed in Settings is gone here too.
+        self.manager = Self.findSangforManager(
+          managers ?? [],
+          providerBundleIdentifier: self.providerBundleIdentifier
+        )
+        if let existing = self.manager {
+          // The caller gets the status as the answer; announcing it as a
+          // change too would have a listener that reloads on change loop.
+          self.observeStatus(of: existing, announce: false)
+        }
+      }
+      completion(self.status)
+    }
+  }
+
   /// Starts the tunnel, installing the configuration first when needed.
   public func start(
     options: [String: NSObject],
@@ -271,7 +300,10 @@ public final class SangforTunnelManager {
 
   private var statusHandler: ((NEVPNStatus) -> Void)?
 
-  private func observeStatus(of manager: NETunnelProviderManager) {
+  private func observeStatus(
+    of manager: NETunnelProviderManager,
+    announce: Bool = true
+  ) {
     if statusObserver == nil {
       statusObserver = NotificationCenter.default.addObserver(
         forName: .NEVPNStatusDidChange,
@@ -287,7 +319,9 @@ public final class SangforTunnelManager {
         self?.statusHandler?(connection.status)
       }
     }
-    statusHandler?(manager.connection.status)
+    if announce {
+      statusHandler?(manager.connection.status)
+    }
   }
 
   private func configure(_ manager: NETunnelProviderManager) {

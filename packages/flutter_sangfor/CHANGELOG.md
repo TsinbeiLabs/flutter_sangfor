@@ -81,6 +81,20 @@
   the `destIP` sent, the resource's `addrPretend` and its app.
 * The extension logs how node certificates are checked (pinned, or not verified
   because the gateway advertised no pins).
+* `SangforTunnelManager.load` reports the tunnel's status without creating a
+  configuration (`.invalid` when none is saved), so an app can find at launch a
+  tunnel that outlived it, or that the user switched on in Settings, without
+  raising the VPN permission prompt.
+* The extension's `getStats` reply carries a `session` summary (interface
+  address, DNS servers, user name) for an app taking over a tunnel it did not
+  start in this process.
+* The terminator resets a segment of a TCP flow it does not hold. After the VPN
+  is switched off and on again the client's old connections retransmitted into
+  nothing until their own timeout (`packet not routed`); they now reconnect at
+  once.
+* `keepOnUserStop` covers a stop the app makes too: the app that sets it owns the
+  plan's lifetime. A removed configuration wipes the plan like a disabled
+  provider does, and stop reasons 9-13 are logged by name.
 
 ## 0.0.12
 

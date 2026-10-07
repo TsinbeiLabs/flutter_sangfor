@@ -150,7 +150,7 @@ public final class ATrustTcpTerminator {
     }
     let isSyn = tcp.flags & ATrustTcpFlag.syn != 0
     let isAck = tcp.flags & ATrustTcpFlag.ack != 0
-    guard isSyn, !isAck else { return false }
+    guard isSyn, !isAck else { return resetOrphan(ip: ip, tcp: tcp) }
     guard shouldTerminate(ip.destinationAddress, tcp.destinationPort) else {
       return false
     }
@@ -164,6 +164,39 @@ public final class ATrustTcpTerminator {
     )
     connections[key] = connection
     connection.start(tcp: tcp)
+    return true
+  }
+
+  /// Answers a segment of a flow this terminator does not hold with a reset.
+  ///
+  /// That is a connection the client opened before the tunnel was restarted
+  /// under it (the VPN switched off and on again), or one already disposed here.
+  /// Dropped, the client keeps retransmitting into nothing until its own
+  /// timeout; reset, it reconnects at once. Sequence numbers as RFC 9293
+  /// 3.10.7.1 has a closed port answer.
+  private func resetOrphan(ip: ATrustIPv4Packet, tcp: ATrustTcpSegmentHeader) -> Bool {
+    guard tcp.flags & ATrustTcpFlag.rst == 0,
+      shouldTerminate(ip.destinationAddress, tcp.destinationPort)
+    else { return false }
+    let acknowledged = tcp.flags & ATrustTcpFlag.ack != 0
+    var consumed = tcp.payload.count
+    if tcp.flags & ATrustTcpFlag.syn != 0 { consumed += 1 }
+    if tcp.flags & ATrustTcpFlag.fin != 0 { consumed += 1 }
+    guard
+      let reset = try? ATrustPacketCodec.buildTcp(
+        sourceAddress: ip.destinationAddress,
+        destinationAddress: ip.sourceAddress,
+        sourcePort: tcp.destinationPort,
+        destinationPort: tcp.sourcePort,
+        sequenceNumber: acknowledged ? tcp.acknowledgmentNumber : 0,
+        acknowledgmentNumber: acknowledged
+          ? 0 : tcpSequenceAdd(tcp.sequenceNumber, consumed),
+        flags: acknowledged ? ATrustTcpFlag.rst : ATrustTcpFlag.rst | ATrustTcpFlag.ack,
+        window: 0,
+        identification: nextIdentification()
+      )
+    else { return false }
+    emit(reset)
     return true
   }
 
