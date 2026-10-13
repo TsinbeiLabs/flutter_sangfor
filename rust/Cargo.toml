@@ -20,7 +20,7 @@ repository = "https://github.com/TsinbeiLabs/flutter_sangfor"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
-hmac = { version = "0.12", default-features = false }
+hmac = { version = "0.13", default-features = false }
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 # TLS: rustls with the pure-Rust RustCrypto provider. `ring`/`aws-lc-rs` are
 # both off the table because they need a C toolchain per target, which is what
