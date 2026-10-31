@@ -1,3 +1,8 @@
+## 0.0.14
+
+* Depend on flutter_sangfor 0.0.14, which renames an already-saved iOS VPN
+  configuration in place so upgrades pick up the localized entry name.
+
 ## 0.0.13
 
 * Gateways publish address ranges as `a.b.c.d-e.f.g.h`, but every matcher here

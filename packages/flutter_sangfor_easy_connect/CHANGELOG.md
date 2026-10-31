@@ -1,3 +1,8 @@
+## 0.0.14
+
+* Depend on flutter_sangfor 0.0.14, which renames an already-saved iOS VPN
+  configuration in place so upgrades pick up the localized entry name.
+
 ## 0.0.13
 
 * Depend on flutter_sangfor 0.0.13, which stops leaking the package name into

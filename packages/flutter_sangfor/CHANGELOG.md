@@ -1,3 +1,13 @@
+## 0.0.14
+
+* `SangforTunnelManager.install` re-applies the current `localizedDescription`
+  and `serverAddress` to a configuration an older build already saved, and
+  re-saves only when they differ. iOS reuses a saved VPN configuration instead
+  of rebuilding it, so without this a device that added the VPN before 0.0.13
+  kept the old entry name -- including the `flutter_sangfor` server field that
+  0.0.13 stopped defaulting to. Updating a saved configuration raises no
+  permission prompt, so an upgrade renames it in place on the next install.
+
 ## 0.0.13
 
 * iOS packet tunnel extension: an in-extension HTTP proxy, published to the
