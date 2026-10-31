@@ -1611,7 +1611,7 @@ do {
   {
     checkEqual(host, "xgbnew.whu.edu.cn", "a forwarded request lower-cases the host")
     checkEqual(port, 80, "http defaults to port 80")
-    let text = String(data: head, encoding: .isoLatin1) ?? ""
+    let text = String(data: head, encoding: .utf8) ?? ""
     check(text.hasPrefix("GET /a/b?x=1&y=2 HTTP/1.1\r\n"), "the target is rewritten to origin-form")
     check(!text.lowercased().contains("proxy-connection"), "Proxy-Connection is dropped")
     check(!text.contains("keep-alive"), "keep-alive is dropped so one connection serves one request")
@@ -1623,7 +1623,7 @@ do {
   }
   if case .request(.forward(_, let port, let head, _), _) = feed("GET http://a.cn HTTP/1.1\r\n\r\n") {
     checkEqual(port, 80, "an empty path is fine")
-    check(String(data: head, encoding: .isoLatin1)?.hasPrefix("GET / HTTP/1.1") ?? false, "an empty path becomes /")
+    check(String(data: head, encoding: .utf8)?.hasPrefix("GET / HTTP/1.1") ?? false, "an empty path becomes /")
   } else {
     check(false, "an absolute-form request without a path parses")
   }

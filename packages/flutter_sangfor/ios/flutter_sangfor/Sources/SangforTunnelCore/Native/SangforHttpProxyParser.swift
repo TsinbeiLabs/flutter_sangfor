@@ -46,9 +46,13 @@ public struct SangforHttpProxyParser {
     let headData = buffer.prefix(end)
     let leftover = Data(buffer.suffix(from: buffer.startIndex + end + 4))
     buffer.removeAll()
-    guard let text = String(data: headData, encoding: .isoLatin1) else {
-      return .failure(.badRequest)
-    }
+    // Decode byte-for-byte (each byte becomes the Unicode scalar of the same
+    // value, i.e. Latin-1). `String(data:encoding:.isoLatin1)` cannot be used:
+    // Linux's swift-corelibs-foundation returns nil from it whenever the header
+    // carries a control byte such as CR or LF, so every request with a header
+    // line would be refused there while the same code works on Apple platforms.
+    // Mapping the bytes directly never fails and is identical everywhere.
+    let text = String(headData.map { Character(UnicodeScalar($0)) })
     let lines = text.components(separatedBy: "\r\n")
     let requestLine = lines[0].split(separator: " ", omittingEmptySubsequences: true)
     guard requestLine.count == 3 else { return .failure(.badRequest) }

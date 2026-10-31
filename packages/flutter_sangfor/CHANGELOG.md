@@ -11,6 +11,13 @@
   proxy's rule) to Swift, driven by the same `route_matcher_cases.json` as the
   Dart tests. `SangforProxyPolicy` and `SangforHttpProxyParser` are pure and
   covered by `tool/run_swift_tests.sh`.
+* The proxy parser decodes the request head byte-for-byte instead of with
+  `String(data:encoding:.isoLatin1)`: Linux's swift-corelibs-foundation answers
+  that with nil whenever a header carries a control byte (CR/LF), so every
+  request with a header line was refused there while the same code passed on
+  Apple platforms. The network checks need `Network.framework`, so
+  `run_swift_tests.sh` now runs them only on an Apple host and skips them
+  elsewhere instead of failing the portable core checks on Linux CI.
 * The proxy dials the TCP tunnel without claiming a resolved address, as the
   Dart in-app proxy does.
 * A start the system initiates (Settings, Control Center, iOS restarting the

@@ -34,9 +34,19 @@ fi
 
 # The direct stream and the proxy server are Network.framework code, so they have their own binary:
 # it needs a real loopback listener and is not part of the portable sources.
-network_out="${TMPDIR:-/tmp}/sangfor_network_tests"
-"$swiftc" -O -o "$network_out" "${sources[@]}" \
-  ios/flutter_sangfor/Sources/SangforTunnelCore/SangforDirectStream.swift \
-  ios/flutter_sangfor/Sources/SangforTunnelCore/SangforProxyServer.swift \
-  swift-tests/network/main.swift
-"$network_out"
+# Network.framework is Apple-only, so this phase is built and run only where the
+# module exists (a macOS host). On a Linux CI runner the portable checks above
+# are the ones that can run; this phase is skipped instead of failing the whole
+# job with `no such module 'Network'`.
+network_probe="${TMPDIR:-/tmp}/sangfor_network_probe.swift"
+printf 'import Network\n' > "$network_probe"
+if "$swiftc" -typecheck "$network_probe" >/dev/null 2>&1; then
+  network_out="${TMPDIR:-/tmp}/sangfor_network_tests"
+  "$swiftc" -O -o "$network_out" "${sources[@]}" \
+    ios/flutter_sangfor/Sources/SangforTunnelCore/SangforDirectStream.swift \
+    ios/flutter_sangfor/Sources/SangforTunnelCore/SangforProxyServer.swift \
+    swift-tests/network/main.swift
+  "$network_out"
+else
+  echo "skipping the network tests: the Network module is unavailable on this host"
+fi
