@@ -1,3 +1,8 @@
+## 0.0.13
+
+* Depend on flutter_sangfor 0.0.13, which stops leaking the package name into
+  the iOS VPN configuration and the Android VPN session name.
+
 ## 0.0.12
 
 * Depend on flutter_sangfor 0.0.12, which reports Android VPN revocations.

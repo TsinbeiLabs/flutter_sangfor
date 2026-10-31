@@ -1,4 +1,4 @@
-## Unreleased
+## 0.0.13
 
 * iOS packet tunnel extension: an in-extension HTTP proxy, published to the
   system with `NEProxySettings`, so apps that honor the system proxy reach the
@@ -95,6 +95,24 @@
 * `keepOnUserStop` covers a stop the app makes too: the app that sets it owns the
   plan's lifetime. A removed configuration wipes the plan like a disabled
   provider does, and stop reasons 9-13 are logged by name.
+* The iOS VPN configuration no longer names itself after the package.
+  `SangforTunnelManager` defaulted both `localizedDescription` and the
+  `NETunnelProviderProtocol.serverAddress` that iOS requires to
+  `"flutter_sangfor"`, and iOS shows those strings verbatim in Settings > VPN,
+  so every consumer leaked the dependency name (the entry title and its
+  "Server" field). The Dart argument defaulted to `'flutter_sangfor'` too.
+* `IosVpnDevice.start`, `startNative`, `installConfiguration` and
+  `startArguments` now take an optional `serverAddress`, and
+  `localizedDescription` is optional. Omitting `localizedDescription` makes the
+  iOS side use the app's localized `CFBundleDisplayName`, so the VPN entry
+  follows the device language; omitting `serverAddress` falls back to that
+  entry name. iOS freezes the value when the configuration is first saved, so a
+  later language change needs a re-save to show through.
+* Android's `VpnTunnelService` hardcoded `VpnService.Builder.setSession` to
+  `"flutter_sangfor"`, which the system VPN UI shows. `AndroidVpnDevice.start`
+  now takes an optional `sessionName`; when omitted the service uses the app's
+  localized label (`PackageManager.getApplicationLabel`), so the session name
+  follows the device language and never leaks the package name.
 
 ## 0.0.12
 
