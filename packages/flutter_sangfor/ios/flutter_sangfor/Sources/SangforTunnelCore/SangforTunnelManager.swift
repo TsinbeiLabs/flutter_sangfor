@@ -167,7 +167,27 @@ public final class SangforTunnelManager {
       ) {
         self.manager = existing
         self.observeStatus(of: existing)
-        completion(nil)
+        // A configuration saved by an older build still carries the name it
+        // was given then -- possibly a stale label, or the package name this
+        // package once defaulted the entry and its server field to. Re-apply
+        // the current identity so an upgrade renames it in place. Updating a
+        // saved configuration raises no VPN permission prompt, and saving only
+        // when something differs makes this a one-time migration rather than a
+        // write on every launch.
+        guard self.identityDiffers(existing) else {
+          completion(nil)
+          return
+        }
+        self.applyIdentity(to: existing)
+        existing.saveToPreferences { saveError in
+          if let saveError {
+            completion(
+              SangforTunnelManagerError.managerSaveFailed(saveError.localizedDescription)
+            )
+            return
+          }
+          completion(nil)
+        }
         return
       }
       let manager = NETunnelProviderManager()
@@ -354,5 +374,28 @@ public final class SangforTunnelManager {
     manager.protocolConfiguration = protocolConfiguration
     manager.localizedDescription = localizedDescription
     manager.isEnabled = true
+  }
+
+  /// Whether a loaded configuration's user-visible identity -- the entry name
+  /// and its server field -- differs from what this manager would set, so
+  /// [install] knows an upgrade has to re-save it. The rest of the
+  /// configuration (provider configuration, app group, enabled state) is left
+  /// alone.
+  private func identityDiffers(_ manager: NETunnelProviderManager) -> Bool {
+    if manager.localizedDescription != localizedDescription { return true }
+    let current = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress
+    return current != serverAddress
+  }
+
+  /// Re-applies the user-visible identity to a loaded configuration.
+  /// `NETunnelProviderProtocol` is a reference type, so mutating the cast
+  /// configuration updates the one the manager already holds; the reassignment
+  /// only makes that explicit.
+  private func applyIdentity(to manager: NETunnelProviderManager) {
+    manager.localizedDescription = localizedDescription
+    if let protocolConfiguration = manager.protocolConfiguration as? NETunnelProviderProtocol {
+      protocolConfiguration.serverAddress = serverAddress
+      manager.protocolConfiguration = protocolConfiguration
+    }
   }
 }
