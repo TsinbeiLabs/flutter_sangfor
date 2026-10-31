@@ -117,6 +117,7 @@ class FlutterSangforPlugin :
                 val proxyPort = call.argument<Int>("proxyPort") ?: 0
                 val notificationTitle = call.argument<String>("notificationTitle") ?: "VPN"
                 val disconnectLabel = call.argument<String>("disconnectLabel") ?: "Disconnect"
+                val sessionName = call.argument<String>("sessionName") ?: ""
                 // The service reports itself from the main thread, so the
                 // blocking wait must run off the platform thread; otherwise
                 // the service can never come up (main thread deadlock -> ANR).
@@ -138,6 +139,7 @@ class FlutterSangforPlugin :
                         proxyPort,
                         notificationTitle,
                         disconnectLabel,
+                        sessionName,
                     )
                     if (fd == null) {
                         result.error("vpn_establish_failed", "VpnService.Builder.establish() returned null.", null)

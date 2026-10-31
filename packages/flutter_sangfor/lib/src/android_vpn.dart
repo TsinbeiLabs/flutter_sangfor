@@ -35,6 +35,10 @@ class AndroidVpnDevice implements SangforPacketDevice {
   ///
   /// [notificationTitle] and [disconnectLabel] localize the persistent
   /// foreground notification and its disconnect action.
+  ///
+  /// [sessionName] names the VPN session shown in Android's system VPN UI. When
+  /// omitted, the native side uses the app's localized label, so a
+  /// package-internal string never surfaces there.
   static Future<AndroidVpnDevice?> start({
     required String address,
     required int prefixLength,
@@ -46,6 +50,7 @@ class AndroidVpnDevice implements SangforPacketDevice {
     int proxyPort = 0,
     String notificationTitle = 'VPN',
     String disconnectLabel = 'Disconnect',
+    String? sessionName,
   }) async {
     if (!Platform.isAndroid) {
       throw UnsupportedError('AndroidVpnDevice requires Android');
@@ -63,6 +68,7 @@ class AndroidVpnDevice implements SangforPacketDevice {
       'proxyPort': proxyPort,
       'notificationTitle': notificationTitle,
       'disconnectLabel': disconnectLabel,
+      'sessionName': sessionName,
     });
     if (fd == null || fd < 0) {
       throw StateError('VpnService.establish() returned no descriptor');

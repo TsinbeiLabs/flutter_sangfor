@@ -192,6 +192,27 @@ void main() {
       );
     });
 
+    test('carries the VPN entry name and server address', () {
+      final args = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+        localizedDescription: '珞家',
+        serverAddress: 'vpn.example.edu',
+      );
+      expect(args['localizedDescription'], '珞家');
+      expect(args['serverAddress'], 'vpn.example.edu');
+
+      // Omitted -> null, so the native side substitutes the app's localized
+      // display name and defaults the server to that name. The package name
+      // must never be the wire default again.
+      final defaults = IosVpnDevice.startArguments(
+        address: '10.0.0.42',
+        prefixLength: 32,
+      );
+      expect(defaults['localizedDescription'], isNull);
+      expect(defaults['serverAddress'], isNull);
+    });
+
     test('session plan hand-off is a no-op off iOS', () async {
       if (Platform.isIOS) return;
       await expectLater(

@@ -136,6 +136,17 @@ class IosVpnDevice implements SangforPacketDevice {
   ///
   /// [appGroupIdentifier] names the App Group shared with the extension
   /// (Info.plist key `SangforAppGroupIdentifier` as fallback).
+  ///
+  /// [localizedDescription] names the VPN entry shown in iOS Settings. When
+  /// omitted, the native side falls back to the app's localized display name
+  /// (`CFBundleDisplayName`), so the entry follows the device language instead
+  /// of leaking a package-internal string. iOS freezes this value into the
+  /// configuration when it is first saved; a later language change needs a
+  /// re-save to show through.
+  ///
+  /// [serverAddress] fills the entry's "Server" field. It is opaque for a
+  /// custom packet tunnel and, when omitted, defaults to [localizedDescription]
+  /// so no internal name surfaces. Pass the real gateway host to display it.
   static Future<IosVpnDevice> start({
     required String address,
     required int prefixLength,
@@ -147,7 +158,8 @@ class IosVpnDevice implements SangforPacketDevice {
     int proxyPort = 0,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
-    String localizedDescription = 'flutter_sangfor',
+    String? localizedDescription,
+    String? serverAddress,
   }) async {
     if (!Platform.isIOS) {
       throw UnsupportedError('IosVpnDevice requires iOS');
@@ -166,6 +178,7 @@ class IosVpnDevice implements SangforPacketDevice {
         providerBundleIdentifier: providerBundleIdentifier,
         appGroupIdentifier: appGroupIdentifier,
         localizedDescription: localizedDescription,
+        serverAddress: serverAddress,
       ),
     );
     if (started != true) {
@@ -207,7 +220,8 @@ class IosVpnDevice implements SangforPacketDevice {
     IosVpnRuntimeMode runtimeMode = IosVpnRuntimeMode.loopbackBridge,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
-    String localizedDescription = 'flutter_sangfor',
+    String? localizedDescription,
+    String? serverAddress,
   }) {
     final advertiseProxy =
         proxyHost.trim().isNotEmpty && proxyPort > 0 && proxyPort <= 65535;
@@ -224,6 +238,7 @@ class IosVpnDevice implements SangforPacketDevice {
       'providerBundleIdentifier': providerBundleIdentifier,
       'appGroupIdentifier': appGroupIdentifier,
       'localizedDescription': localizedDescription,
+      'serverAddress': serverAddress,
     };
   }
 
@@ -238,13 +253,15 @@ class IosVpnDevice implements SangforPacketDevice {
   static Future<void> installConfiguration({
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
-    String localizedDescription = 'flutter_sangfor',
+    String? localizedDescription,
+    String? serverAddress,
   }) async {
     if (!Platform.isIOS) return;
     await _channel.invokeMethod<void>('vpnInstall', <String, Object?>{
       'providerBundleIdentifier': providerBundleIdentifier,
       'appGroupIdentifier': appGroupIdentifier,
       'localizedDescription': localizedDescription,
+      'serverAddress': serverAddress,
     });
   }
 
@@ -263,7 +280,8 @@ class IosVpnDevice implements SangforPacketDevice {
     int mtu = 0,
     String? providerBundleIdentifier,
     String? appGroupIdentifier,
-    String localizedDescription = 'flutter_sangfor',
+    String? localizedDescription,
+    String? serverAddress,
   }) async {
     if (!Platform.isIOS) {
       throw UnsupportedError('IosVpnDevice requires iOS');
@@ -281,6 +299,7 @@ class IosVpnDevice implements SangforPacketDevice {
         providerBundleIdentifier: providerBundleIdentifier,
         appGroupIdentifier: appGroupIdentifier,
         localizedDescription: localizedDescription,
+        serverAddress: serverAddress,
       ),
     );
     if (started != true) {

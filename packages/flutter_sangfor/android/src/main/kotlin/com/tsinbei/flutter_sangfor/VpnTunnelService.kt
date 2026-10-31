@@ -172,12 +172,13 @@ class VpnTunnelService : VpnService() {
         proxyPort: Int = 0,
         notificationTitle: String = "",
         disconnectLabel: String = "",
+        sessionName: String = "",
     ): Int? {
         // Without any DNS server the VPN network cannot resolve names (apps
         // get 0.0.0.0), so fall back to the underlying network's resolvers.
         val effectiveDns = dnsServers.ifEmpty { underlyingDnsServers() }
         val builder = Builder()
-            .setSession("flutter_sangfor")
+            .setSession(sessionName.ifEmpty { defaultSessionName() })
             .addAddress(address, prefixLength)
         if (mtu > 0) {
             builder.setMtu(mtu)
@@ -217,6 +218,18 @@ class VpnTunnelService : VpnService() {
         }
         notifyUpdated()
         return descriptor.detachFd()
+    }
+
+    /** The app's localized label, used as the VPN session name when the caller
+     * does not supply one, so the system VPN UI shows the app's own name in the
+     * device language instead of a package-internal string. Falls back to a
+     * neutral label if it cannot be resolved. */
+    private fun defaultSessionName(): String {
+        return try {
+            packageManager.getApplicationLabel(applicationInfo).toString()
+        } catch (_: Throwable) {
+            "VPN"
+        }
     }
 
     /** DNS servers of the current underlying (non-VPN) network. */

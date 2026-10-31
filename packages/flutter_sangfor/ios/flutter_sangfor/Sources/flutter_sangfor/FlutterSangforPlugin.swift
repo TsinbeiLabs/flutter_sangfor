@@ -118,6 +118,25 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
     return nil
   }
 
+  /// The app's localized display name, used as the VPN entry name when Dart
+  /// does not supply one. Reads the *localized* info dictionary so an app that
+  /// localizes `CFBundleDisplayName` through `InfoPlist.strings` gets its
+  /// per-language name in Settings. Falls back from `CFBundleDisplayName` to
+  /// `CFBundleName`; `nil` lets `SangforTunnelManager` substitute a neutral
+  /// label. The VPN configuration freezes this string when it is first saved,
+  /// so a later device-language change needs a re-save to take effect.
+  private static var appDisplayName: String? {
+    func firstNonEmpty(_ key: String) -> String? {
+      for dictionary in [Bundle.main.localizedInfoDictionary, Bundle.main.infoDictionary] {
+        if let value = dictionary?[key] as? String, !value.isEmpty {
+          return value
+        }
+      }
+      return nil
+    }
+    return firstNonEmpty("CFBundleDisplayName") ?? firstNonEmpty("CFBundleName")
+  }
+
   private func ensureManager(_ call: FlutterMethodCall) -> SangforTunnelManager? {
     let args = call.arguments as? [String: Any] ?? [:]
     guard
@@ -126,7 +145,13 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
       return nil
     }
     let appGroup = resolvedAppGroupIdentifier(args["appGroupIdentifier"] as? String)
+    // When Dart does not name the VPN, use the app's own localized display
+    // name so the entry in Settings reads like the app (and follows the
+    // device language) instead of leaking the package name.
     let description = (args["localizedDescription"] as? String).flatMap {
+      $0.isEmpty ? nil : $0
+    } ?? Self.appDisplayName
+    let serverAddress = (args["serverAddress"] as? String).flatMap {
       $0.isEmpty ? nil : $0
     }
     if let tunnelManager {
@@ -139,7 +164,8 @@ public class FlutterSangforPlugin: NSObject, FlutterPlugin {
     let manager = SangforTunnelManager(
       providerBundleIdentifier: provider,
       appGroupIdentifier: appGroup,
-      localizedDescription: description ?? "flutter_sangfor"
+      localizedDescription: description,
+      serverAddress: serverAddress
     )
     manager.onStatusChange { [weak self] status in
       self?.statusSink?(status.sangforName)

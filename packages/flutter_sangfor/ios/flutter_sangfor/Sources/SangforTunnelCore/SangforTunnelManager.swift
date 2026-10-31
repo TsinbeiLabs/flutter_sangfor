@@ -83,13 +83,31 @@ public final class SangforTunnelManager {
   public init(
     providerBundleIdentifier: String,
     appGroupIdentifier: String? = nil,
-    localizedDescription: String = "flutter_sangfor",
-    serverAddress: String = "flutter_sangfor"
+    localizedDescription: String? = nil,
+    serverAddress: String? = nil
   ) {
     self.providerBundleIdentifier = providerBundleIdentifier
     self.appGroupIdentifier = appGroupIdentifier
-    self.localizedDescription = localizedDescription
-    self.serverAddress = serverAddress
+    // Never leak the package name into the user-visible VPN entry. A caller
+    // that supplies no name gets a neutral label; the Flutter adapter passes
+    // the app's localized display name so Settings shows the app's own name in
+    // the user's language.
+    let resolvedDescription: String
+    if let localizedDescription, !localizedDescription.isEmpty {
+      resolvedDescription = localizedDescription
+    } else {
+      resolvedDescription = "VPN"
+    }
+    self.localizedDescription = resolvedDescription
+    // iOS rejects a configuration without a server address ("Missing server
+    // address" on save), yet the value is opaque for a custom provider and is
+    // shown verbatim in Settings. Fall back to the entry name rather than the
+    // package name so nothing internal surfaces.
+    if let serverAddress, !serverAddress.isEmpty {
+      self.serverAddress = serverAddress
+    } else {
+      self.serverAddress = resolvedDescription
+    }
   }
 
   deinit {
