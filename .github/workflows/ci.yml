@@ -235,6 +235,12 @@ jobs:
             if curl -fsS https://pub.dev/api/packages/flutter_sangfor \
               | jq -e --arg v "$version" '[.versions[].version] | index($v) != null' > /dev/null; then
               echo "flutter_sangfor $version is live on pub.dev"
+              # The API metadata leads pub.dev's CDN edges: a connector's
+              # `pub get` on another runner can still hit a stale edge and fail
+              # to resolve the just-published version. Settle so the edges
+              # converge before releasing the connectors (which also retry).
+              echo "settling 90s for CDN edges to converge..."
+              sleep 90
               exit 0
             fi
             sleep 10
@@ -250,6 +256,7 @@ jobs:
       (startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch')
     needs: await-root-on-pub
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -257,8 +264,53 @@ jobs:
           - flutter_sangfor_atrust
           - flutter_sangfor_easy_connect
     permissions:
-      id-token: write
+      id-token: write # Required for OIDC token minting
       contents: read
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
-    with:
-      working-directory: packages/${{ matrix.package }}
+    # An inlined replica of dart-lang/setup-dart's reusable publish.yml (the
+    # same validate -> package -> publish flow) with one addition: the
+    # dependency resolve retries. pub.dev is eventually consistent across CDN
+    # edges, so even after await-root-on-pub saw the root version, this runner
+    # can hit a stale edge and fail to resolve it ("doesn't match any
+    # versions") -- which is what flaked the lockstep release. The reusable
+    # workflow resolves once with no retry, so the retry lives here.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Set up Flutter
+        # The connectors depend on flutter_sangfor (a Flutter plugin), so the
+        # resolve needs the Flutter SDK, exactly as publish.yml installs it.
+        uses: flutter-actions/setup-flutter@6e2468fd827c4a7337cd4b835a6049b78bc0bd1f
+
+      - name: Install dependencies (retry through pub.dev propagation)
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          for attempt in $(seq 1 40); do
+            if dart pub get; then
+              echo "resolved on attempt $attempt"
+              exit 0
+            fi
+            echo "attempt $attempt: root version not resolvable yet; retrying in 15s"
+            sleep 15
+          done
+          echo "::error::dependencies did not resolve after 40 attempts (~10 min)"
+          exit 1
+
+      - name: Publish - dry run
+        working-directory: packages/${{ matrix.package }}
+        run: dart pub publish --dry-run
+
+      - name: Package archive for provenance
+        env:
+          PKG_DIR: packages/${{ matrix.package }}
+        run: |
+          sudo -E unshare -n sudo -u "$(whoami)" -E env "PATH=$PATH" "HOME=$HOME" \
+            dart pub publish --to-archive="$RUNNER_TEMP/package.tar.gz" --skip-validation --directory="${PKG_DIR:-.}"
+
+      - name: Publish to pub.dev
+        run: dart pub publish --from-archive="$RUNNER_TEMP/package.tar.gz" --force
