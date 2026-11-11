@@ -35,7 +35,7 @@ libc = "0.2"
 # Already in the tree through rustls, so this costs nothing to build. Used for
 # one thing: the control token an installed daemon is created with, which has to
 # be unpredictable rather than merely unique.
-getrandom = "0.2"
+getrandom = "0.4"
 # One event loop for every desktop and mobile daemon. `mio` rather than `tokio`
 # because the plane is a synchronous state machine that returns effects: an
 # async runtime would mean colouring the whole core, and because `mio` is pure
