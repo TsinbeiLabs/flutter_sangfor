@@ -134,6 +134,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     // onCreate to acknowledge that authorization completed; dispatch alone
     // does not prove that the user accepted. This mode never creates a TUN.
     const acknowledgement = context.filesDir + '/flutter_sangfor_permission_' + Date.now();
+    let failure: BusinessError | null = null;
     try {
       await vpnExtension.startVpnExtensionAbility({
         bundleName: this.bundleName,
@@ -144,21 +145,23 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
       while (Date.now() < deadline) {
         if (fileIo.accessSync(acknowledgement)) {
           this.permissionConfirmed = true;
-          result.success(true);
-          return;
+          break;
         }
         await FlutterSangforPlugin.delay(FlutterSangforPlugin.POLL_INTERVAL_MS);
       }
-      result.success(false);
     } catch (e) {
-      const error = e as BusinessError;
-      result.error('vpn_permission_failed', `${error.code} ${error.message}`, null);
+      failure = e as BusinessError;
     } finally {
       await vpnExtension.stopVpnExtensionAbility({
         bundleName: this.bundleName,
         abilityName: VPN_EXTENSION_ABILITY_NAME
       }).catch((): void => {});
       if (fileIo.accessSync(acknowledgement)) fileIo.unlinkSync(acknowledgement);
+    }
+    if (failure != null) {
+      result.error('vpn_permission_failed', `${failure.code} ${failure.message}`, null);
+    } else {
+      result.success(this.permissionConfirmed);
     }
   }
 
