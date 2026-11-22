@@ -1,3 +1,7 @@
+## 0.0.15
+
+* Depend on flutter_sangfor 0.0.15 for OHOS VPN authorization before connection.
+
 ## 0.0.14
 
 * Depend on flutter_sangfor 0.0.14, which renames an already-saved iOS VPN

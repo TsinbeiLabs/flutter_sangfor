@@ -7,11 +7,12 @@ import { common } from '@kit.AbilityKit';
 export const VPN_EXTENSION_ABILITY_NAME = 'SangforVpnExtAbility';
 export const VPN_CONFIG_FILE_NAME = 'flutter_sangfor_vpn.json';
 export const VPN_SOCKET_FILE_NAME = 'flutter_sangfor_vpn.sock';
+const VPN_PERMISSION_FILE_NAME = 'flutter_sangfor_permission';
 
 /// Hand-off contract between the app process and the VPN extension process.
 /// Written to the app sandbox before the extension starts; the extension
-/// reads it in onCreate (want.parameters is only delivered reliably from
-/// API 22 onward, so the sandbox file is the source of truth).
+/// reads it in onCreate. The system VPN service does not reliably forward
+/// custom Want parameters, so application-scoped storage owns the hand-off.
 export interface SangforVpnConfig {
   socketPath: string;
   address: string;
@@ -24,11 +25,46 @@ export interface SangforVpnConfig {
 }
 
 export function vpnConfigPath(context: common.Context): string {
-  return context.filesDir + '/' + VPN_CONFIG_FILE_NAME;
+  return context.getApplicationContext().filesDir + '/' + VPN_CONFIG_FILE_NAME;
 }
 
 export function vpnSocketPath(context: common.Context): string {
-  return context.filesDir + '/' + VPN_SOCKET_FILE_NAME;
+  return context.getApplicationContext().filesDir + '/' + VPN_SOCKET_FILE_NAME;
+}
+
+function permissionPath(context: common.Context): string {
+  return context.getApplicationContext().filesDir + '/' + VPN_PERMISSION_FILE_NAME;
+}
+
+function writePermissionState(context: common.Context, state: string): void {
+  const file = fileIo.openSync(permissionPath(context),
+    fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+  try {
+    fileIo.writeSync(file.fd, state);
+  } finally {
+    fileIo.closeSync(file);
+  }
+}
+
+export function beginVpnPermissionRequest(context: common.Context): void {
+  writePermissionState(context, 'pending');
+}
+
+export function acknowledgeVpnPermissionRequest(context: common.Context): boolean {
+  const path = permissionPath(context);
+  if (!fileIo.accessSync(path) || fileIo.readTextSync(path) !== 'pending') return false;
+  writePermissionState(context, 'granted');
+  return true;
+}
+
+export function isVpnPermissionConfirmed(context: common.Context): boolean {
+  const path = permissionPath(context);
+  return fileIo.accessSync(path) && fileIo.readTextSync(path) === 'granted';
+}
+
+export function clearVpnPermissionRequest(context: common.Context): void {
+  const path = permissionPath(context);
+  if (fileIo.accessSync(path)) fileIo.unlinkSync(path);
 }
 
 export function writeVpnConfig(context: common.Context, config: SangforVpnConfig): void {

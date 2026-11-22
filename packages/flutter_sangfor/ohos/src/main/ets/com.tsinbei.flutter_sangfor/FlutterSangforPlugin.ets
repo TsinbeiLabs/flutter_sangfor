@@ -10,11 +10,13 @@ import MethodCall from '@ohos/flutter_ohos/src/main/ets/plugin/common/MethodCall
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { fileIo } from '@kit.CoreFileKit';
 import { startFdListener, pollFd, stopFdListener } from 'libflutter_sangfor.so';
 import {
   SangforVpnConfig,
   VPN_EXTENSION_ABILITY_NAME,
+  beginVpnPermissionRequest,
+  isVpnPermissionConfirmed,
+  clearVpnPermissionRequest,
   vpnSocketPath,
   writeVpnConfig
 } from './VpnBridge';
@@ -133,17 +135,16 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     // The public OHOS API authorizes by starting the extension. Wait for
     // onCreate to acknowledge that authorization completed; dispatch alone
     // does not prove that the user accepted. This mode never creates a TUN.
-    const acknowledgement = context.filesDir + '/flutter_sangfor_permission_' + Date.now();
     let failure: BusinessError | null = null;
     try {
+      beginVpnPermissionRequest(context);
       await vpnExtension.startVpnExtensionAbility({
         bundleName: this.bundleName,
-        abilityName: VPN_EXTENSION_ABILITY_NAME,
-        parameters: { 'flutter_sangfor.permissionAcknowledgement': acknowledgement }
+        abilityName: VPN_EXTENSION_ABILITY_NAME
       });
       const deadline = Date.now() + FlutterSangforPlugin.START_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (fileIo.accessSync(acknowledgement)) {
+        if (isVpnPermissionConfirmed(context)) {
           this.permissionConfirmed = true;
           break;
         }
@@ -156,7 +157,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
         bundleName: this.bundleName,
         abilityName: VPN_EXTENSION_ABILITY_NAME
       }).catch((): void => {});
-      if (fileIo.accessSync(acknowledgement)) fileIo.unlinkSync(acknowledgement);
+      clearVpnPermissionRequest(context);
     }
     if (failure != null) {
       result.error('vpn_permission_failed', `${failure.code} ${failure.message}`, null);
@@ -183,6 +184,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
       blockedApplications: (call.argument('blockedApplications') as string[]) ?? new Array<string>(),
     };
     try {
+      clearVpnPermissionRequest(context);
       writeVpnConfig(context, config);
     } catch (e) {
       result.error('vpn_config_failed', 'Could not write the VPN config file.', null);

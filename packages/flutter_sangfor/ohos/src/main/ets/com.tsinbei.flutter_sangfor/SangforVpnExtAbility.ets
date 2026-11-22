@@ -2,7 +2,7 @@ import { VpnExtensionAbility, vpnExtension, connection } from '@kit.NetworkKit';
 import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { SangforVpnConfig, readVpnConfig, vpnSocketPath } from './VpnBridge';
+import { SangforVpnConfig, acknowledgeVpnPermissionRequest, readVpnConfig, vpnSocketPath } from './VpnBridge';
 import { sendFd } from 'libflutter_sangfor.so';
 
 const TAG = 'flutter_sangfor';
@@ -30,13 +30,7 @@ export class SangforVpnExtAbility extends VpnExtensionAbility {
   private tunFd = -1;
 
   onCreate(want: Want): void {
-    const acknowledgement = want.parameters?.['flutter_sangfor.permissionAcknowledgement'] as string;
-    if (acknowledgement != null &&
-      acknowledgement.startsWith(this.context.filesDir + '/flutter_sangfor_permission_')) {
-      const file = fileIo.openSync(acknowledgement, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE);
-      fileIo.closeSync(file);
-      return;
-    }
+    if (acknowledgeVpnPermissionRequest(this.context)) return;
     const config = readVpnConfig(this.context);
     if (config == null) {
       console.error(TAG, 'vpn extension: config file is missing');

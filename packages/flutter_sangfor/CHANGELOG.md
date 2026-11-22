@@ -1,3 +1,14 @@
+## 0.0.15
+
+* OHOS can request VPN trust before connecting, by starting the extension in
+  authorization-only mode without creating a TUN or installing routes.
+* Wait for the authorized extension's acknowledgement in application-scoped
+  storage. The VPN service does not reliably forward custom Want parameters.
+* Report session-confirmed authorization instead of returning true before the
+  user grants trust, and finish extension cleanup before replying to Dart.
+* Share VPN configuration and descriptor socket paths through the application
+  context, so the UI and VPN extension use the same sandbox directory.
+
 ## 0.0.14
 
 * `SangforTunnelManager.install` re-applies the current `localizedDescription`
