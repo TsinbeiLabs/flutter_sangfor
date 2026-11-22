@@ -167,7 +167,7 @@ jobs:
 
   swift-core:
     name: native swift core (packet tunnel data plane)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: packages/flutter_sangfor
