@@ -62,17 +62,19 @@ class OhosVpnDevice implements SangforPacketDevice {
     return OhosVpnDevice._(device);
   }
 
-  /// Whether the VPN permission has been granted to this app. On HarmonyOS
-  /// the system prompts when the extension starts for the first time, so
-  /// there is no separate pre-grant step.
+  /// Whether this plugin session has confirmed VPN authorization by starting
+  /// the extension. OHOS provides no public query for the persistent grant;
+  /// after an app restart this remains false until authorization is confirmed
+  /// again. Revocation is enforced by the system on every extension start.
   static Future<bool> get isPrepared async {
     if (Platform.operatingSystem != 'ohos') return false;
     final prepared = await _channel.invokeMethod<bool>('vpnPrepare');
     return prepared ?? false;
   }
 
-  /// Requests the system VPN permission. On HarmonyOS this is a no-op that
-  /// always succeeds (see [isPrepared]).
+  /// Starts the extension in authorization-only mode and waits for its
+  /// acknowledgement. No TUN interface or network routes are created.
+  /// The system displays its consent dialog when authorization is needed.
   static Future<bool> requestPermission() async {
     if (Platform.operatingSystem != 'ohos') return false;
     return await _channel.invokeMethod<bool>('vpnRequestPermission') ?? false;

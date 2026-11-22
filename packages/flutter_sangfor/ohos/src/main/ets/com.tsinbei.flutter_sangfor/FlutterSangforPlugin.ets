@@ -10,6 +10,7 @@ import MethodCall from '@ohos/flutter_ohos/src/main/ets/plugin/common/MethodCall
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { startFdListener, pollFd, stopFdListener } from 'libflutter_sangfor.so';
 import {
   SangforVpnConfig,
@@ -34,6 +35,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
   private context: common.Context | null = null;
   private bundleName = '';
   private state = 'disconnected';
+  private permissionConfirmed = false;
 
   getUniqueClassName(): string {
     return 'FlutterSangforPlugin';
@@ -90,12 +92,10 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
         result.success(null);
         break;
       case 'vpnPrepare':
-        // No pre-grant step exists: the system prompts for authorization
-        // when the extension starts for the first time.
-        result.success(true);
+        result.success(this.permissionConfirmed);
         break;
       case 'vpnRequestPermission':
-        result.success(true);
+        this.handlePermissionRequest(result);
         break;
       case 'vpnStart':
         this.handleVpnStart(call, result);
@@ -117,6 +117,49 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     capabilities.set('supportsSocks5', true);
     capabilities.set('supportedAuthTypes', new Array<string>());
     return capabilities;
+  }
+
+  private async handlePermissionRequest(result: MethodResult): Promise<void> {
+    const context = this.context;
+    if (context == null || this.bundleName.length === 0) {
+      result.error('no_context', 'The plugin is not attached.', null);
+      return;
+    }
+    if (this.state === 'connected') {
+      result.success(true);
+      return;
+    }
+    this.permissionConfirmed = false;
+    // The public OHOS API authorizes by starting the extension. Wait for
+    // onCreate to acknowledge that authorization completed; dispatch alone
+    // does not prove that the user accepted. This mode never creates a TUN.
+    const acknowledgement = context.filesDir + '/flutter_sangfor_permission_' + Date.now();
+    try {
+      await vpnExtension.startVpnExtensionAbility({
+        bundleName: this.bundleName,
+        abilityName: VPN_EXTENSION_ABILITY_NAME,
+        parameters: { 'flutter_sangfor.permissionAcknowledgement': acknowledgement }
+      });
+      const deadline = Date.now() + FlutterSangforPlugin.START_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (fileIo.accessSync(acknowledgement)) {
+          this.permissionConfirmed = true;
+          result.success(true);
+          return;
+        }
+        await FlutterSangforPlugin.delay(FlutterSangforPlugin.POLL_INTERVAL_MS);
+      }
+      result.success(false);
+    } catch (e) {
+      const error = e as BusinessError;
+      result.error('vpn_permission_failed', `${error.code} ${error.message}`, null);
+    } finally {
+      await vpnExtension.stopVpnExtensionAbility({
+        bundleName: this.bundleName,
+        abilityName: VPN_EXTENSION_ABILITY_NAME
+      }).catch((): void => {});
+      if (fileIo.accessSync(acknowledgement)) fileIo.unlinkSync(acknowledgement);
+    }
   }
 
   private async handleVpnStart(call: MethodCall, result: MethodResult): Promise<void> {
@@ -165,6 +208,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     while (Date.now() < deadline) {
       const fd = pollFd();
       if (fd >= 0) {
+        this.permissionConfirmed = true;
         this.state = 'connected';
         result.success(fd);
         return;

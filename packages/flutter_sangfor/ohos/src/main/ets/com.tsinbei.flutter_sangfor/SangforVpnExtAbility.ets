@@ -30,6 +30,13 @@ export class SangforVpnExtAbility extends VpnExtensionAbility {
   private tunFd = -1;
 
   onCreate(want: Want): void {
+    const acknowledgement = want.parameters?.['flutter_sangfor.permissionAcknowledgement'] as string;
+    if (acknowledgement != null &&
+      acknowledgement.startsWith(this.context.filesDir + '/flutter_sangfor_permission_')) {
+      const file = fileIo.openSync(acknowledgement, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE);
+      fileIo.closeSync(file);
+      return;
+    }
     const config = readVpnConfig(this.context);
     if (config == null) {
       console.error(TAG, 'vpn extension: config file is missing');
