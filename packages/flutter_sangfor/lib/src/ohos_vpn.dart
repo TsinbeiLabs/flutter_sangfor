@@ -62,10 +62,11 @@ class OhosVpnDevice implements SangforPacketDevice {
     return OhosVpnDevice._(device);
   }
 
-  /// Whether this plugin session has confirmed VPN authorization by starting
-  /// the extension. OHOS provides no public query for the persistent grant;
-  /// after an app restart this remains false until authorization is confirmed
-  /// again. Revocation is enforced by the system on every extension start.
+  /// Whether the last completed extension authorization was confirmed.
+  /// The native plugin persists this receipt across engine/process restarts.
+  /// OHOS provides no public query for persistent system trust: a revocation
+  /// outside the app is enforced on the next extension start, not discovered
+  /// by this passive status read. Clearing app data removes the receipt.
   static Future<bool> get isPrepared async {
     if (Platform.operatingSystem != 'ohos') return false;
     final prepared = await _channel.invokeMethod<bool>('vpnPrepare');

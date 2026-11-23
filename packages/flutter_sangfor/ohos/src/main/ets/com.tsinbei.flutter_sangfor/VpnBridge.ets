@@ -1,6 +1,7 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
 
 /// Ability name the plugin starts/stops; host apps declare an extension
 /// ability with this name (see ohos/templates/).
@@ -8,6 +9,24 @@ export const VPN_EXTENSION_ABILITY_NAME = 'SangforVpnExtAbility';
 export const VPN_CONFIG_FILE_NAME = 'flutter_sangfor_vpn.json';
 export const VPN_SOCKET_FILE_NAME = 'flutter_sangfor_vpn.sock';
 const VPN_PERMISSION_FILE_NAME = 'flutter_sangfor_permission';
+const VPN_AUTHORIZATION_STORE = 'flutter_sangfor_authorization';
+
+/// Last completed extension confirmation, not a live system trust query.
+/// Keeping this separate from the temporary handshake preserves it across
+/// engine/process restarts without turning passive status reads into prompts.
+export function readVpnAuthorization(context: common.Context): boolean {
+  return preferences.getPreferencesSync(context.getApplicationContext(), {
+    name: VPN_AUTHORIZATION_STORE
+  }).getSync('confirmed', false) as boolean;
+}
+
+export function writeVpnAuthorization(context: common.Context, confirmed: boolean): void {
+  const store = preferences.getPreferencesSync(context.getApplicationContext(), {
+    name: VPN_AUTHORIZATION_STORE
+  });
+  store.putSync('confirmed', confirmed);
+  store.flushSync();
+}
 
 /// Hand-off contract between the app process and the VPN extension process.
 /// Written to the app sandbox before the extension starts; the extension

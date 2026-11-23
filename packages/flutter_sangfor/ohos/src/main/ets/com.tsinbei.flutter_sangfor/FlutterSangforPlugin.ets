@@ -16,6 +16,8 @@ import {
   VPN_EXTENSION_ABILITY_NAME,
   beginVpnPermissionRequest,
   isVpnPermissionConfirmed,
+  readVpnAuthorization,
+  writeVpnAuthorization,
   clearVpnPermissionRequest,
   vpnSocketPath,
   writeVpnConfig
@@ -37,7 +39,6 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
   private context: common.Context | null = null;
   private bundleName = '';
   private state = 'disconnected';
-  private permissionConfirmed = false;
 
   getUniqueClassName(): string {
     return 'FlutterSangforPlugin';
@@ -94,7 +95,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
         result.success(null);
         break;
       case 'vpnPrepare':
-        result.success(this.permissionConfirmed);
+        this.handleVpnPrepare(result);
         break;
       case 'vpnRequestPermission':
         this.handlePermissionRequest(result);
@@ -121,6 +122,19 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     return capabilities;
   }
 
+  private handleVpnPrepare(result: MethodResult): void {
+    const context = this.context;
+    if (context == null) {
+      result.error('no_context', 'The plugin is not attached.', null);
+      return;
+    }
+    try {
+      result.success(readVpnAuthorization(context));
+    } catch (error) {
+      result.error('vpn_permission_state_failed', (error as Error).message, null);
+    }
+  }
+
   private async handlePermissionRequest(result: MethodResult): Promise<void> {
     const context = this.context;
     if (context == null || this.bundleName.length === 0) {
@@ -131,7 +145,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
       result.success(true);
       return;
     }
-    this.permissionConfirmed = false;
+    let permissionConfirmed = false;
     // The public OHOS API authorizes by starting the extension. Wait for
     // onCreate to acknowledge that authorization completed; dispatch alone
     // does not prove that the user accepted. This mode never creates a TUN.
@@ -145,7 +159,7 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
       const deadline = Date.now() + FlutterSangforPlugin.START_TIMEOUT_MS;
       while (Date.now() < deadline) {
         if (isVpnPermissionConfirmed(context)) {
-          this.permissionConfirmed = true;
+          permissionConfirmed = true;
           break;
         }
         await FlutterSangforPlugin.delay(FlutterSangforPlugin.POLL_INTERVAL_MS);
@@ -162,7 +176,12 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     if (failure != null) {
       result.error('vpn_permission_failed', `${failure.code} ${failure.message}`, null);
     } else {
-      result.success(this.permissionConfirmed);
+      try {
+        writeVpnAuthorization(context, permissionConfirmed);
+        result.success(permissionConfirmed);
+      } catch (error) {
+        result.error('vpn_permission_state_failed', (error as Error).message, null);
+      }
     }
   }
 
@@ -213,7 +232,13 @@ export class FlutterSangforPlugin implements FlutterPlugin, MethodCallHandler {
     while (Date.now() < deadline) {
       const fd = pollFd();
       if (fd >= 0) {
-        this.permissionConfirmed = true;
+        try {
+          writeVpnAuthorization(context, true);
+        } catch (error) {
+          // The system has already created the TUN. A metadata-write failure
+          // must not orphan that descriptor or prevent the caller using it.
+          console.error(`VPN authorization receipt could not be saved: ${(error as Error).message}`);
+        }
         this.state = 'connected';
         result.success(fd);
         return;

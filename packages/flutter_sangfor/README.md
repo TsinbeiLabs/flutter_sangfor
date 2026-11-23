@@ -232,6 +232,20 @@ module, so two host-side steps are required (templates in `ohos/templates/`):
 Only `ohos.permission.INTERNET` is required (declared by the plugin HAR and
 merged into the host). The system shows a VPN authorization dialog the first
 time `OhosVpnDevice.start` runs; declining it surfaces as a failed start.
+`OhosVpnDevice.requestPermission()` can also confirm authorization without
+creating a TUN or routes. Its completed result is saved in application-scoped
+preferences, so `isPrepared` does not reset merely because the engine or process
+restarts. Successful TUN starts save the same confirmation. Status reads never
+start the extension or display a permission dialog.
+
+OpenHarmony exposes no public query for persistent system VPN trust. `isPrepared`
+therefore reports the last completed confirmation, not a live revocation check;
+the system enforces authorization on every extension start. A completed declined
+or timed-out confirmation clears the saved receipt; an infrastructure error
+does not reinterpret the previous observation. Clearing application data removes
+it. Installations that used an older plugin without persistence need one explicit
+confirmation or successful VPN start to establish their first saved receipt.
+
 The tunnel transport must stay outside the route list (the caller splits any
 CIDR block covering the tunnel endpoints), so no `protect()` handling is
 needed. MTU values are clamped to the system range `[576, 1500]`.
